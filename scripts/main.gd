@@ -1,8 +1,7 @@
 extends Control
 
-## ☦ SKULLBEAT — Super-instrument tracker
+## SKULLBEAT — Super-instrument tracker
 ## Monophonic channels: each new row note chokes previous on same channel
-## Chord column reserved for later (structure ready via channel voices)
 
 const CHANNELS := 4
 const STEPS := 16
@@ -65,6 +64,7 @@ func _ready() -> void:
 	sample_import = SampleImport.new()
 	sample_import.setup(self, synth)
 	sample_import.import_finished.connect(_on_import_finished)
+	# Short baked one-shots for demo drums (sample-only, no double synth)
 	synth.bake_procedural_sample(1, "kick")
 	synth.bake_procedural_sample(6, "snare")
 	synth.bake_procedural_sample(10, "hat")
@@ -77,7 +77,6 @@ func _init_data() -> void:
 	for ch in range(CHANNELS):
 		var phrase: Array = []
 		for s in range(STEPS):
-			# chord reserved for later multi-note per row; mono choke still applies per channel
 			phrase.append({"note": -1, "oct": 4, "inst": 0, "fx1": "----", "fx2": "----", "chord": ""})
 		phrases.append(phrase)
 		var table: Array = []
@@ -98,27 +97,34 @@ func _init_data() -> void:
 	phrases[2][10] = {"note": 0, "oct": 5, "inst": 10, "fx1": "V50", "fx2": "D10", "chord": ""}
 	phrases[2][12] = {"note": 0, "oct": 5, "inst": 10, "fx1": "V70", "fx2": "D20", "chord": ""}
 	phrases[2][14] = {"note": 0, "oct": 5, "inst": 10, "fx1": "V30", "fx2": "D05", "chord": ""}
+	# CH4 uses pure synth (TEXTURE/BASS) — no baked sample
 	phrases[3][0]  = {"note": 0, "oct": 2, "inst": 16, "fx1": "V88", "fx2": "FA0", "chord": ""}
 	phrases[3][8]  = {"note": 7, "oct": 2, "inst": 16, "fx1": "V70", "fx2": "F40", "chord": ""}
 
 func _process(delta: float) -> void:
 	if not is_playing:
 		return
-	var step_dur = 60.0 / bpm / 4.0
-	step_timer += delta
-	if step_timer >= step_dur:
+	var step_dur: float = 60.0 / bpm / 4.0
+	# Clamp delta so a hitch can't dump a huge backlog of notes
+	step_timer += minf(delta, step_dur * 2.0)
+	var advanced := 0
+	while step_timer >= step_dur and advanced < 3:
 		step_timer -= step_dur
 		_advance_step()
+		advanced += 1
+	# Drop leftover time if we still lag — keeps tempo stable instead of slowing forever
+	if step_timer > step_dur * 2.0:
+		step_timer = 0.0
 
 func _advance_step() -> void:
-	prev_play_step = current_step
+	var old_step: int = current_step
 	current_step = (current_step + 1) % STEPS
 	for ch in range(CHANNELS):
 		var d = phrases[ch][current_step]
 		if d.note >= 0:
-			# channel index => monophonic choke on that channel
 			synth.note_on(d.note, d.oct, d.inst, d.fx1, d.fx2, 1.0, ch)
-	_refresh_playhead()
+	_refresh_playhead_rows(old_step, current_step)
+	prev_play_step = old_step
 
 func _import_target_inst() -> int:
 	if channel_view_mode[selected_ch] == 0:
@@ -173,18 +179,18 @@ func _unhandled_input(event: InputEvent) -> void:
 			_change_bpm(-1)
 			get_viewport().set_input_as_handled()
 		KEY_UP:
-			selected_step = max(0, selected_step - 1)
+			selected_step = maxi(0, selected_step - 1)
 			_refresh_all_channels()
 			get_viewport().set_input_as_handled()
 		KEY_DOWN:
-			selected_step = min(STEPS - 1, selected_step + 1)
+			selected_step = mini(STEPS - 1, selected_step + 1)
 			_refresh_all_channels()
 			get_viewport().set_input_as_handled()
 		KEY_LEFT:
 			if selected_col > 0:
 				selected_col -= 1
 			else:
-				selected_ch = max(0, selected_ch - 1)
+				selected_ch = maxi(0, selected_ch - 1)
 				selected_col = 4
 			_refresh_all_channels()
 			get_viewport().set_input_as_handled()
@@ -192,7 +198,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			if selected_col < 4:
 				selected_col += 1
 			else:
-				selected_ch = min(CHANNELS - 1, selected_ch + 1)
+				selected_ch = mini(CHANNELS - 1, selected_ch + 1)
 				selected_col = 0
 			_refresh_all_channels()
 			get_viewport().set_input_as_handled()
@@ -203,10 +209,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 
 func _on_pad_triggered(pad_idx: int) -> void:
-	var inst = pad_idx + 1
-	var note = pad_idx % 12
-	var oct = 2 + int(pad_idx / 8)
-	# live pads use free pool (channel -1), not tracker mono slots
+	var inst: int = pad_idx + 1
+	var note: int = pad_idx % 12
+	var oct: int = 2 + int(float(pad_idx) / 8.0)
 	synth.note_on(note, oct, inst, "----", "----", 1.0, -1)
 	status_label.text = "PAD %02d -> INST %02X  %s%d" % [pad_idx + 1, inst, NOTE_NAMES[note], oct]
 	if is_recording and channel_view_mode[selected_ch] == 0:
@@ -236,7 +241,7 @@ func _build_ui() -> void:
 	header_bar.add_theme_constant_override("separation", 6)
 	root.add_child(header_bar)
 	var title := Label.new()
-	title.text = "☦ SKULLBEAT"
+	title.text = "SKULLBEAT"
 	title.add_theme_color_override("font_color", COL_TEXT_BRIGHT)
 	title.add_theme_font_size_override("font_size", 16)
 	header_bar.add_child(title)
@@ -315,16 +320,16 @@ func _build_ui() -> void:
 		channel_containers.append({"panel": ch_panel, "header": ch_header, "steps_box": steps_box, "col_hdr": col_hdr})
 		step_labels.append([])
 	status_label = Label.new()
-	status_label.text = "MONO: new note chokes channel · SPACE play · pads live"
+	status_label.text = "MONO choke · SPACE play · pads live · IMP samples"
 	status_label.add_theme_color_override("font_color", COL_TEXT_DIM)
 	status_label.add_theme_font_size_override("font_size", 10)
 	root.add_child(status_label)
 
 func _recalc_layout() -> void:
-	var avail_h = size.y - 80
-	if avail_h < 100:
-		avail_h = 400
-	visible_rows = clamp(int(avail_h / 18), 8, STEPS)
+	var avail_h = size.y - 80.0
+	if avail_h < 100.0:
+		avail_h = 400.0
+	visible_rows = clampi(int(avail_h / 18.0), 8, STEPS)
 	_rebuild_step_rows()
 
 func _rebuild_step_rows() -> void:
@@ -338,8 +343,9 @@ func _rebuild_step_rows() -> void:
 			row.add_theme_constant_override("separation", 0)
 			row.custom_minimum_size.y = 18
 			var bg_rect := ColorRect.new()
-			bg_rect.color = COL_ROW_ALT if s % 4 == 0 else COL_BG
+			bg_rect.color = COL_ROW_ALT if (s % 4) == 0 else COL_BG
 			bg_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			bg_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			row.add_child(bg_rect)
 			row.move_child(bg_rect, 0)
 			var cells: Array = []
@@ -361,26 +367,31 @@ func _refresh_all_channels() -> void:
 	for ch in range(CHANNELS):
 		_refresh_channel(ch)
 
-## Only recolor playhead rows — avoids full UI rebuild every step (was a crash contributor)
-func _refresh_playhead() -> void:
+## Only recolor the old + new playhead rows (was recoloring entire grid every step)
+func _refresh_playhead_rows(old_step: int, new_step: int) -> void:
 	for ch in range(CHANNELS):
 		if channel_view_mode[ch] != 0:
 			continue
-		for s in range(min(visible_rows, STEPS)):
-			var cells: Array = step_labels[ch][s]
-			for c in range(5):
-				var col_color = COL_TEXT
-				if is_playing and s == current_step:
-					col_color = COL_PLAYHEAD
-				elif ch == selected_ch and s == selected_step and c == selected_col:
-					col_color = COL_ACTIVE
-				cells[c].add_theme_color_override("font_color", col_color)
+		if old_step >= 0 and old_step < visible_rows and old_step < step_labels[ch].size():
+			_color_row(ch, old_step, false)
+		if new_step >= 0 and new_step < visible_rows and new_step < step_labels[ch].size():
+			_color_row(ch, new_step, true)
+
+func _color_row(ch: int, step: int, is_playhead: bool) -> void:
+	var cells: Array = step_labels[ch][step]
+	for c in range(5):
+		var col_color = COL_TEXT
+		if is_playhead and is_playing:
+			col_color = COL_PLAYHEAD
+		elif ch == selected_ch and step == selected_step and c == selected_col:
+			col_color = COL_ACTIVE
+		cells[c].add_theme_color_override("font_color", col_color)
 
 func _refresh_channel(ch: int) -> void:
 	var mode = channel_view_mode[ch]
 	var header: Button = channel_containers[ch]["header"]
 	header.text = "CH%d  %s" % [ch + 1, "TABLE" if mode == 1 else "PHRASE"]
-	for s in range(min(visible_rows, STEPS)):
+	for s in range(mini(visible_rows, STEPS)):
 		var cells: Array = step_labels[ch][s]
 		if mode == 0:
 			var data = phrases[ch][s]
@@ -442,16 +453,16 @@ func _apply_drag_value(ch: int, step: int, col: int, val: int) -> void:
 	var d = phrases[ch][step]
 	match col:
 		0:
-			d.note = clamp(val, -1, 11)
+			d.note = clampi(val, -1, 11)
 			if d.note < 0:
 				d.note = -1
 		1:
-			d.oct = clamp(val, 0, 8)
+			d.oct = clampi(val, 0, 8)
 		2:
-			d.inst = clamp(val, 0, 63)
+			d.inst = clampi(val, 0, 63)
 		3, 4:
 			var presets = ["----", "V40", "V80", "VA0", "D20", "D50", "D90", "F20", "F80", "FA0", "M40", "M80", "S60", "SA0"]
-			var idx = clamp(val, 0, presets.size() - 1)
+			var idx = clampi(val, 0, presets.size() - 1)
 			if col == 3:
 				d.fx1 = presets[idx]
 			else:
@@ -491,7 +502,7 @@ func _on_stop() -> void:
 	_refresh_all_channels()
 
 func _change_bpm(d: int) -> void:
-	bpm = clamp(bpm + d, 40.0, 300.0)
+	bpm = clampf(bpm + float(d), 40.0, 300.0)
 	bpm_label.text = "BPM %d" % int(bpm)
 
 func _make_console_btn(txt: String) -> Button:
