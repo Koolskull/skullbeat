@@ -1,8 +1,8 @@
 extends Control
 
-## ☦ SKULLBEAT — Tracker + Synth + FX-driven parameters
-## FX1 / FX2 columns control the synth:
-##   Vxx volume   Dxx decay   Fxx filter   Mxx mod/FM   Pxx pitch   Sxx start-pitch
+## ☦ SKULLBEAT — Super-instrument tracker
+## Synth + sample layer + 3-slot FX rack + EQ/comp per inst + master EQ/limiter
+## Tracker FX: V D F M P S
 
 const CHANNELS := 4
 const STEPS := 16
@@ -57,6 +57,10 @@ var synth: SynthEngine
 func _ready() -> void:
 	synth = SynthEngine.new()
 	add_child(synth)
+	# Bake sample layers into a few instruments (synth still runs alongside)
+	synth.bake_procedural_sample(1, "kick")
+	synth.bake_procedural_sample(6, "snare")
+	synth.bake_procedural_sample(10, "hat")
 	_init_data()
 	_build_ui()
 	_recalc_layout()
@@ -74,16 +78,10 @@ func _init_data() -> void:
 		tables.append(table)
 		channel_view_mode.append(0)
 
-	# Seed with real FX so the difference is audible immediately
-	# CH1 kicks — one normal, one longer decay + higher start pitch
 	phrases[0][0]  = {"note": 0, "oct": 2, "inst": 1, "fx1": "V90", "fx2": "D40"}
-	phrases[0][8]  = {"note": 0, "oct": 2, "inst": 1, "fx1": "VA0", "fx2": "D90"}  # longer, louder
-
-	# CH2 snares
+	phrases[0][8]  = {"note": 0, "oct": 2, "inst": 1, "fx1": "VA0", "fx2": "D90"}
 	phrases[1][4]  = {"note": 0, "oct": 3, "inst": 6, "fx1": "V80", "fx2": "D50"}
-	phrases[1][12] = {"note": 0, "oct": 3, "inst": 6, "fx1": "V60", "fx2": "D30"}  # quieter/shorter
-
-	# CH3 hats — varying decay via D
+	phrases[1][12] = {"note": 0, "oct": 3, "inst": 6, "fx1": "V60", "fx2": "D30"}
 	phrases[2][0]  = {"note": 0, "oct": 5, "inst": 10, "fx1": "V70", "fx2": "D20"}
 	phrases[2][2]  = {"note": 0, "oct": 5, "inst": 10, "fx1": "V50", "fx2": "D10"}
 	phrases[2][4]  = {"note": 0, "oct": 5, "inst": 10, "fx1": "V70", "fx2": "D20"}
@@ -92,10 +90,8 @@ func _init_data() -> void:
 	phrases[2][10] = {"note": 0, "oct": 5, "inst": 10, "fx1": "V50", "fx2": "D10"}
 	phrases[2][12] = {"note": 0, "oct": 5, "inst": 10, "fx1": "V70", "fx2": "D20"}
 	phrases[2][14] = {"note": 0, "oct": 5, "inst": 10, "fx1": "V30", "fx2": "D05"}
-
-	# CH4 bass/texture — filter + decay
-	phrases[3][0]  = {"note": 0, "oct": 2, "inst": 16, "fx1": "V88", "fx2": "FA0"}  # open filter
-	phrases[3][8]  = {"note": 7, "oct": 2, "inst": 16, "fx1": "V70", "fx2": "F40"}  # darker
+	phrases[3][0]  = {"note": 0, "oct": 2, "inst": 16, "fx1": "V88", "fx2": "FA0"}
+	phrases[3][8]  = {"note": 7, "oct": 2, "inst": 16, "fx1": "V70", "fx2": "F40"}
 
 func _process(delta: float) -> void:
 	if not is_playing: return
@@ -126,18 +122,15 @@ func _unhandled_input(event: InputEvent) -> void:
 			else: _toggle_play()
 			get_viewport().set_input_as_handled()
 		KEY_0:
-			_toggle_rec()
-			get_viewport().set_input_as_handled()
+			_toggle_rec(); get_viewport().set_input_as_handled()
 		KEY_EQUAL, KEY_KP_ADD:
 			_change_bpm(1); get_viewport().set_input_as_handled()
 		KEY_MINUS, KEY_KP_SUBTRACT:
 			_change_bpm(-1); get_viewport().set_input_as_handled()
 		KEY_UP:
-			selected_step = max(0, selected_step - 1)
-			_refresh_all_channels(); get_viewport().set_input_as_handled()
+			selected_step = max(0, selected_step - 1); _refresh_all_channels(); get_viewport().set_input_as_handled()
 		KEY_DOWN:
-			selected_step = min(STEPS - 1, selected_step + 1)
-			_refresh_all_channels(); get_viewport().set_input_as_handled()
+			selected_step = min(STEPS - 1, selected_step + 1); _refresh_all_channels(); get_viewport().set_input_as_handled()
 		KEY_LEFT:
 			if selected_col > 0: selected_col -= 1
 			else: selected_ch = max(0, selected_ch - 1); selected_col = 4
@@ -156,14 +149,10 @@ func _on_pad_triggered(pad_idx: int) -> void:
 	var inst = pad_idx + 1
 	var note = pad_idx % 12
 	var oct = 2 + int(pad_idx / 8)
-	# Live pad uses default (no FX) so it stays punchy
 	synth.note_on(note, oct, inst, "----", "----", 1.0)
 	status_label.text = "PAD %02d → INST %02X  %s%d" % [pad_idx + 1, inst, NOTE_NAMES[note], oct]
 	if is_recording and channel_view_mode[selected_ch] == 0:
-		phrases[selected_ch][selected_step] = {
-			"note": note, "oct": oct, "inst": inst,
-			"fx1": "V80", "fx2": "----"
-		}
+		phrases[selected_ch][selected_step] = {"note": note, "oct": oct, "inst": inst, "fx1": "V80", "fx2": "----"}
 		_refresh_channel(selected_ch)
 		selected_step = (selected_step + 1) % STEPS
 		_refresh_all_channels()
@@ -187,7 +176,7 @@ func _build_ui() -> void:
 	title.add_theme_font_size_override("font_size", 16)
 	header_bar.add_child(title)
 	var mode_lbl := Label.new()
-	mode_lbl.text = "FX-DRIVEN SYNTH"
+	mode_lbl.text = "SUPER-INST · SAMPLE+SYNTH+FX"
 	mode_lbl.add_theme_color_override("font_color", COL_TEXT_DIM)
 	mode_lbl.add_theme_font_size_override("font_size", 11)
 	header_bar.add_child(mode_lbl)
@@ -205,15 +194,9 @@ func _build_ui() -> void:
 	var bpm_up := _make_console_btn("+")
 	bpm_up.pressed.connect(func(): _change_bpm(1))
 	header_bar.add_child(bpm_up)
-	rec_btn = _make_console_btn("REC")
-	rec_btn.pressed.connect(_toggle_rec)
-	header_bar.add_child(rec_btn)
-	play_btn = _make_console_btn("PLAY")
-	play_btn.pressed.connect(_toggle_play)
-	header_bar.add_child(play_btn)
-	var stop_btn := _make_console_btn("STOP")
-	stop_btn.pressed.connect(_on_stop)
-	header_bar.add_child(stop_btn)
+	rec_btn = _make_console_btn("REC"); rec_btn.pressed.connect(_toggle_rec); header_bar.add_child(rec_btn)
+	play_btn = _make_console_btn("PLAY"); play_btn.pressed.connect(_toggle_play); header_bar.add_child(play_btn)
+	var stop_btn := _make_console_btn("STOP"); stop_btn.pressed.connect(_on_stop); header_bar.add_child(stop_btn)
 	var channels_row := HBoxContainer.new()
 	channels_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	channels_row.add_theme_constant_override("separation", 3)
@@ -254,7 +237,7 @@ func _build_ui() -> void:
 		channel_containers.append({"panel": ch_panel, "header": ch_header, "steps_box": steps_box, "col_hdr": col_hdr})
 		step_labels.append([])
 	status_label = Label.new()
-	status_label.text = "FX: V=vol  D=decay  F=filter  M=mod  P=pitch  S=start-pitch   ·  SPACE PLAY  0 REC"
+	status_label.text = "SUPER-INST: synth+sample · FX rack · EQ/COMP · MASTER EQ/LIM/DELAY/REVERB"
 	status_label.add_theme_color_override("font_color", COL_TEXT_DIM)
 	status_label.add_theme_font_size_override("font_size", 10)
 	root.add_child(status_label)
@@ -341,9 +324,6 @@ func _get_current_value(ch: int, step: int, col: int) -> int:
 		0: return d.note if d.note >= 0 else 0
 		1: return d.oct
 		2: return d.inst
-		3, 4:
-			# For FX we return a simple index for cycling common commands later
-			return 0
 		_: return 0
 
 func _apply_drag_value(ch: int, step: int, col: int, val: int) -> void:
@@ -356,8 +336,6 @@ func _apply_drag_value(ch: int, step: int, col: int, val: int) -> void:
 		1: d.oct = clamp(val, 0, 8)
 		2: d.inst = clamp(val, 0, 63)
 		3, 4:
-			# Quick FX value nudge while REC+drag on FX columns
-			# Cycles through useful presets for now
 			var presets = ["----", "V40", "V80", "VA0", "D20", "D50", "D90", "F20", "F80", "FA0", "M40", "M80", "S60", "SA0"]
 			var idx = clamp(val, 0, presets.size() - 1)
 			if col == 3: d.fx1 = presets[idx]
@@ -372,11 +350,8 @@ func _toggle_rec() -> void:
 	is_recording = not is_recording
 	if is_recording:
 		rec_btn.text = "REC*"; _style_btn_active(rec_btn, true)
-		status_label.text = "REC ON · DRAG FX COLUMNS TO CYCLE COMMANDS"
 	else:
-		rec_btn.text = "REC"; _style_btn_active(rec_btn, false)
-		is_dragging = false
-		status_label.text = "REC OFF"
+		rec_btn.text = "REC"; _style_btn_active(rec_btn, false); is_dragging = false
 
 func _toggle_play() -> void:
 	if is_playing: return
@@ -385,7 +360,7 @@ func _toggle_play() -> void:
 
 func _on_stop() -> void:
 	is_playing = false; current_step = 0; play_btn.text = "PLAY"
-	_refresh_all_channels(); status_label.text = "STOPPED"
+	_refresh_all_channels()
 
 func _change_bpm(d: int) -> void:
 	bpm = clamp(bpm + d, 40.0, 300.0)
