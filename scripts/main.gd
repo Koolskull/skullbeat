@@ -517,16 +517,16 @@ func _build_ui() -> void:
 
 	root = VBoxContainer.new()
 	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	root.add_theme_constant_override("separation", 2)
-	root.offset_left = 4
-	root.offset_top = 4
-	root.offset_right = -4
-	root.offset_bottom = -4
+	root.add_theme_constant_override("separation", 4)
+	root.offset_left = 6
+	root.offset_top = 6
+	root.offset_right = -6
+	root.offset_bottom = -6
 	add_child(root)
 
 	# header: scene map | title | transport
 	header_bar = HBoxContainer.new()
-	header_bar.add_theme_constant_override("separation", 6)
+	header_bar.add_theme_constant_override("separation", 8)
 	root.add_child(header_bar)
 
 	scene_map = SceneMap.new()
@@ -539,12 +539,12 @@ func _build_ui() -> void:
 	var title := Label.new()
 	title.text = "SKULLBEAT"
 	title.add_theme_color_override("font_color", COL_TEXT_BRIGHT)
-	title.add_theme_font_size_override("font_size", 14)
+	title.add_theme_font_size_override("font_size", 18)
 	title_col.add_child(title)
 	scene_title = Label.new()
 	scene_title.text = "PHRASE"
 	scene_title.add_theme_color_override("font_color", COL_ACTIVE)
-	scene_title.add_theme_font_size_override("font_size", 10)
+	scene_title.add_theme_font_size_override("font_size", 13)
 	title_col.add_child(scene_title)
 
 	var spacer := Control.new()
@@ -554,7 +554,7 @@ func _build_ui() -> void:
 	bpm_label = Label.new()
 	bpm_label.text = "BPM %d" % int(clock.bpm)
 	bpm_label.add_theme_color_override("font_color", COL_ACTIVE)
-	bpm_label.add_theme_font_size_override("font_size", 13)
+	bpm_label.add_theme_font_size_override("font_size", 16)
 	header_bar.add_child(bpm_label)
 	var bd := _btn("-")
 	bd.pressed.connect(func(): _change_bpm(-1))
@@ -591,7 +591,7 @@ func _build_ui() -> void:
 	status_label = Label.new()
 	status_label.text = "Shift+arrows map · INS instrument · MIX levels · LCH live"
 	status_label.add_theme_color_override("font_color", COL_TEXT_DIM)
-	status_label.add_theme_font_size_override("font_size", 10)
+	status_label.add_theme_font_size_override("font_size", 13)
 	root.add_child(status_label)
 
 func _host() -> Control:
@@ -605,7 +605,7 @@ func _build_phrase_view() -> void:
 	phrase_host = _host()
 	var channels_row := HBoxContainer.new()
 	channels_row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	channels_row.add_theme_constant_override("separation", 3)
+	channels_row.add_theme_constant_override("separation", 4)
 	phrase_host.add_child(channels_row)
 	channel_containers.clear()
 	step_labels.clear()
@@ -621,7 +621,7 @@ func _build_phrase_view() -> void:
 		var hdr := Button.new()
 		hdr.text = "CH%d  PHRASE" % (ch + 1)
 		hdr.focus_mode = Control.FOCUS_NONE
-		hdr.custom_minimum_size.y = 22
+		hdr.custom_minimum_size.y = 30
 		_style_hdr(hdr)
 		var ch_i = ch
 		hdr.pressed.connect(func():
@@ -638,7 +638,7 @@ func _build_phrase_view() -> void:
 			l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 			l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			l.add_theme_color_override("font_color", COL_TEXT_DIM)
-			l.add_theme_font_size_override("font_size", 9)
+			l.add_theme_font_size_override("font_size", 12)
 			col_hdr.add_child(l)
 		var steps_box := VBoxContainer.new()
 		steps_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -657,7 +657,7 @@ func _build_launch_view() -> void:
 	var clips_lbl := Label.new()
 	clips_lbl.text = "CLIP LAUNCH  A–D banks · mute CH · live FX"
 	clips_lbl.add_theme_color_override("font_color", COL_TEXT_DIM)
-	clips_lbl.add_theme_font_size_override("font_size", 11)
+	clips_lbl.add_theme_font_size_override("font_size", 14)
 	v.add_child(clips_lbl)
 
 	var clips_row := HBoxContainer.new()
@@ -666,7 +666,7 @@ func _build_launch_view() -> void:
 	clip_btns.clear()
 	for i in range(BANKS):
 		var b := _btn("  %c  " % (65 + i))
-		b.custom_minimum_size = Vector2(64, 48)
+		b.custom_minimum_size = Vector2(80, 56)
 		var bi = i
 		b.pressed.connect(func(): _switch_bank(bi))
 		clips_row.add_child(b)
@@ -689,7 +689,7 @@ func _build_launch_view() -> void:
 	var fx_lbl := Label.new()
 	fx_lbl.text = "LIVE FX  G glitch · T retrig · Y stutter · K kill"
 	fx_lbl.add_theme_color_override("font_color", COL_TEXT_DIM)
-	fx_lbl.add_theme_font_size_override("font_size", 11)
+	fx_lbl.add_theme_font_size_override("font_size", 14)
 	v.add_child(fx_lbl)
 
 	var fx_row := HBoxContainer.new()
@@ -698,7 +698,7 @@ func _build_launch_view() -> void:
 	fx_btns.clear()
 	for item in [["GLITCH", "glitch"], ["RTRG", "retrig"], ["STUT", "stutter"], ["KILL", "kill"]]:
 		var fb := _btn(item[0])
-		fb.custom_minimum_size = Vector2(72, 40)
+		fb.custom_minimum_size = Vector2(88, 48)
 		var id = item[1]
 		fb.pressed.connect(func():
 			match id:
@@ -718,8 +718,9 @@ func _build_launch_view() -> void:
 
 	xy_a_panel = _make_xy_pad("XY A  X=filter  Y=drive", true)
 	xy_b_panel = _make_xy_pad("XY B  X=delay  Y=time", false)
-	xy_row.add_child(xy_a_panel.get_parent())
-	xy_row.add_child(xy_b_panel.get_parent())
+	# area is under Panel under xy_wrap — add the unparented wrap (never get_parent)
+	xy_row.add_child(xy_a_panel.get_meta("wrap"))
+	xy_row.add_child(xy_b_panel.get_meta("wrap"))
 
 func _make_xy_pad(label: String, is_a: bool) -> ColorRect:
 	var xy_wrap := VBoxContainer.new()
@@ -729,7 +730,7 @@ func _make_xy_pad(label: String, is_a: bool) -> ColorRect:
 	var l := Label.new()
 	l.text = label
 	l.add_theme_color_override("font_color", COL_TEXT_DIM)
-	l.add_theme_font_size_override("font_size", 10)
+	l.add_theme_font_size_override("font_size", 13)
 	xy_wrap.add_child(l)
 	var panel := PanelContainer.new()
 	panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -738,14 +739,14 @@ func _make_xy_pad(label: String, is_a: bool) -> ColorRect:
 	xy_wrap.add_child(panel)
 	var area := ColorRect.new()
 	area.color = Color("#111111")
-	area.custom_minimum_size = Vector2(120, 120)
+	area.custom_minimum_size = Vector2(160, 160)
 	area.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	area.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	area.mouse_filter = Control.MOUSE_FILTER_STOP
 	panel.add_child(area)
 	var dot := ColorRect.new()
 	dot.color = COL_ACTIVE
-	dot.size = Vector2(10, 10)
+	dot.size = Vector2(14, 14)
 	dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	area.add_child(dot)
 	if is_a:
@@ -770,17 +771,15 @@ func _make_xy_pad(label: String, is_a: bool) -> ColorRect:
 				live.set_xy_b(Vector2(nx, ny))
 			_place_xy_dot(dot, area, Vector2(nx, ny))
 	)
-	# store wrap as child of caller's parent later — return area for ref, attach wrap via meta
+	# wrap is unparented; caller must add_child(area.get_meta("wrap"))
 	area.set_meta("wrap", xy_wrap)
-	# reparent trick: caller adds wrap
-	# We'll return area but caller should add wrap — fix by returning wrap's area after attaching
 	return area
 
 func _place_xy_dot(dot: ColorRect, area: ColorRect, v: Vector2) -> void:
 	var sz = area.size
 	if sz.x < 1.0:
 		sz = Vector2(120, 120)
-	dot.position = Vector2(v.x * sz.x - 5.0, (1.0 - v.y) * sz.y - 5.0)
+	dot.position = Vector2(v.x * sz.x - 7.0, (1.0 - v.y) * sz.y - 7.0)
 
 func _build_settings_view() -> void:
 	settings_host = _host()
@@ -833,7 +832,7 @@ func _build_settings_view() -> void:
 	var note := Label.new()
 	note.text = "Master FX wet defaults 0 — use LCH XY pads live.\nAUv3 shelved — see docs/IOS_AUDIO.md"
 	note.add_theme_color_override("font_color", COL_TEXT_DIM)
-	note.add_theme_font_size_override("font_size", 11)
+	note.add_theme_font_size_override("font_size", 13)
 	v.add_child(note)
 
 func _build_project_view() -> void:
@@ -874,7 +873,7 @@ func _build_export_view() -> void:
 	d.add_theme_color_override("font_color", COL_TEXT_DIM)
 	v.add_child(d)
 	var ex := _btn("EXPORT NOW")
-	ex.custom_minimum_size = Vector2(140, 40)
+	ex.custom_minimum_size = Vector2(160, 48)
 	ex.pressed.connect(_export_song)
 	v.add_child(ex)
 	var imp := _btn("IMPORT SAMPLE")
@@ -925,26 +924,20 @@ func _refresh_project_list() -> void:
 		row.add_child(b)
 		project_list.add_child(row)
 
-# Fix XY pad parenting — rebuild launch xy section cleanly on first show
-func _notification(what: int) -> void:
-	if what == NOTIFICATION_READY:
-		pass
-
 func _recalc_layout() -> void:
-	var h: float = size.y - 90.0
-	if h < 100.0: h = 400.0
-	visible_rows = clampi(int(h / 18.0), 8, STEPS)
-	if phrase_host and phrase_host.visible:
-		_rebuild_rows()
-	# fix xy pads: ensure wraps are in tree
-	_ensure_xy_parents()
-
-func _ensure_xy_parents() -> void:
-	if xy_a_panel and xy_a_panel.has_meta("wrap"):
-		var w: Control = xy_a_panel.get_meta("wrap")
-		if w.get_parent() == null and launch_host:
-			# already handled in build
-			pass
+	var h: float = size.y - 100.0
+	if h < 100.0:
+		h = 400.0
+	var rows := clampi(int(h / 22.0), 8, STEPS)
+	# Never rebuild tracker grid while clock is running — that hitches audio
+	if rows != visible_rows and not clock.playing:
+		visible_rows = rows
+		if phrase_host and phrase_host.visible:
+			_rebuild_rows()
+	elif visible_rows <= 0:
+		visible_rows = rows
+		if phrase_host and phrase_host.visible:
+			_rebuild_rows()
 
 func _rebuild_rows() -> void:
 	if channel_containers.is_empty():
@@ -957,7 +950,7 @@ func _rebuild_rows() -> void:
 		for s in range(visible_rows):
 			var row := HBoxContainer.new()
 			row.add_theme_constant_override("separation", 0)
-			row.custom_minimum_size.y = 18
+			row.custom_minimum_size.y = 22
 			var bg := ColorRect.new()
 			bg.color = COL_ROW_ALT if (s % 4) == 0 else COL_BG
 			bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -970,7 +963,7 @@ func _rebuild_rows() -> void:
 				cell.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 				cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 				cell.add_theme_color_override("font_color", COL_TEXT)
-				cell.add_theme_font_size_override("font_size", 12)
+				cell.add_theme_font_size_override("font_size", 15)
 				cell.mouse_filter = Control.MOUSE_FILTER_STOP
 				cell.gui_input.connect(_on_cell.bind(ch, s, col))
 				row.add_child(cell)
@@ -1046,7 +1039,7 @@ func _on_cell(event: InputEvent, ch: int, step: int, col: int) -> void:
 			drag_start_value = _cell_val(ch, step, col)
 		_refresh_all()
 	elif event is InputEventMouseMotion and is_dragging and is_recording:
-		var dsteps = int((drag_start_y - event.position.y) / 12.0)
+		var dsteps = int((drag_start_y - event.position.y) / 14.0)
 		if dsteps != 0:
 			_apply_drag(ch, step, col, drag_start_value + dsteps)
 			_refresh_ch(ch)
@@ -1101,7 +1094,7 @@ func _build_inst_view() -> void:
 	inst_id_label = Label.new()
 	inst_id_label.text = "INST 01"
 	inst_id_label.add_theme_color_override("font_color", COL_ACTIVE)
-	inst_id_label.add_theme_font_size_override("font_size", 16)
+	inst_id_label.add_theme_font_size_override("font_size", 18)
 	inst_id_label.custom_minimum_size.x = 100
 	nav.add_child(inst_id_label)
 	var nextb := _btn(">")
@@ -1228,7 +1221,7 @@ func _build_inst_view() -> void:
 	var tip := Label.new()
 	tip.text = "[ ] select inst · P preview · IMP load sample · REC drag in PHR for FX cmds"
 	tip.add_theme_color_override("font_color", COL_TEXT_DIM)
-	tip.add_theme_font_size_override("font_size", 10)
+	tip.add_theme_font_size_override("font_size", 13)
 	v.add_child(tip)
 
 func _nudge_algo(d: int) -> void:
@@ -1330,12 +1323,12 @@ func _build_mixer_view() -> void:
 		var lab := Label.new()
 		lab.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		lab.add_theme_color_override("font_color", COL_TEXT)
-		lab.add_theme_font_size_override("font_size", 12)
+		lab.add_theme_font_size_override("font_size", 14)
 		col.add_child(lab)
 		mix_ch_labels.append(lab)
 		var track := ColorRect.new()
 		track.color = Color("#111111")
-		track.custom_minimum_size = Vector2(48, 160)
+		track.custom_minimum_size = Vector2(64, 180)
 		track.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		track.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		track.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -1366,7 +1359,7 @@ func _build_mixer_view() -> void:
 	mcol.add_child(mix_master_label)
 	var mtrack := ColorRect.new()
 	mtrack.color = Color("#111111")
-	mtrack.custom_minimum_size = Vector2(48, 160)
+	mtrack.custom_minimum_size = Vector2(64, 180)
 	mtrack.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	mtrack.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	mtrack.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -1385,7 +1378,7 @@ func _build_mixer_view() -> void:
 	var tip := Label.new()
 	tip.text = "Mute on LCH or here · levels also scale live pads via master"
 	tip.add_theme_color_override("font_color", COL_TEXT_DIM)
-	tip.add_theme_font_size_override("font_size", 10)
+	tip.add_theme_font_size_override("font_size", 13)
 	v.add_child(tip)
 
 func _mix_track_h(ch: int) -> float:
@@ -1442,7 +1435,7 @@ func _btn(txt: String) -> Button:
 	var b := Button.new()
 	b.text = txt
 	b.focus_mode = Control.FOCUS_NONE
-	b.custom_minimum_size = Vector2(44, 26)
+	b.custom_minimum_size = Vector2(56, 36)
 	_style_btn(b, false)
 	return b
 
@@ -1462,7 +1455,7 @@ func _style_btn(b: Button, active: bool) -> void:
 	b.add_theme_stylebox_override("normal", sb)
 	b.add_theme_stylebox_override("hover", sb)
 	b.add_theme_stylebox_override("pressed", sb)
-	b.add_theme_font_size_override("font_size", 11)
+	b.add_theme_font_size_override("font_size", 14)
 
 func _style_hdr(b: Button) -> void:
 	var sb := StyleBoxFlat.new()
@@ -1474,7 +1467,7 @@ func _style_hdr(b: Button) -> void:
 	b.add_theme_stylebox_override("hover", sb)
 	b.add_theme_stylebox_override("pressed", sb)
 	b.add_theme_color_override("font_color", COL_TEXT)
-	b.add_theme_font_size_override("font_size", 11)
+	b.add_theme_font_size_override("font_size", 14)
 
 func _style_panel(p: PanelContainer) -> void:
 	var sb := StyleBoxFlat.new()
@@ -1482,8 +1475,8 @@ func _style_panel(p: PanelContainer) -> void:
 	sb.border_color = COL_BORDER
 	sb.set_border_width_all(1)
 	sb.set_corner_radius_all(0)
-	sb.content_margin_left = 2
-	sb.content_margin_right = 2
-	sb.content_margin_top = 1
-	sb.content_margin_bottom = 1
+	sb.content_margin_left = 4
+	sb.content_margin_right = 4
+	sb.content_margin_top = 2
+	sb.content_margin_bottom = 2
 	p.add_theme_stylebox_override("panel", sb)

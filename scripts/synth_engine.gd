@@ -312,6 +312,7 @@ func _render(n: int) -> void:
 				_glitch_ctr = 0
 				_glitch_hold = mix
 			mix = _glitch_hold
+			# mild bit reduction
 			var bits: float = 4.0 + (1.0 - live.glitch_amt) * 12.0
 			var steps: float = pow(2.0, bits)
 			mix = floor(mix * steps) / steps
