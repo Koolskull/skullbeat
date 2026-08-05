@@ -1,8 +1,7 @@
 class_name SynthEngine
 extends Node
 
-## Thin audio mixer over Dsp + Instrument.
-## Cost rules: sample XOR synth, master = gain+clip, hard frame cap.
+## Thin audio mixer over Dsp + Instrument + LiveFx.
 
 const CH := 4
 const PAD := 4
@@ -13,6 +12,7 @@ const MAX_FRAMES := 384
 var player: AudioStreamPlayer
 var playback: AudioStreamGeneratorPlayback
 var instruments: Array = []
+var live: LiveFx = null
 
 var v_on: PackedByteArray
 var v_algo: PackedByteArray
@@ -34,6 +34,7 @@ var v_spitch: PackedFloat32Array
 var v_spos: PackedFloat32Array
 var v_sinc: PackedFloat32Array
 var v_gain: PackedFloat32Array
+var v_spos0: PackedFloat32Array  # sample start for retrig
 
 var master_gain := 0.85
 var master_lim := 0.0
@@ -49,6 +50,12 @@ var delay_n := 0
 
 var _pad_rr := 0
 var _out: PackedVector2Array = PackedVector2Array()
+var _glitch_hold := 0.0
+var _glitch_ctr := 0
+var _stutter_phase := 0.0
+
+func bind_live(fx: LiveFx) -> void:
+	live = fx
 
 func _ready() -> void:
 	_alloc_voices()
@@ -103,6 +110,7 @@ func _alloc_voices() -> void:
 	v_spos = _f32()
 	v_sinc = _f32()
 	v_gain = _f32()
+	v_spos0 = _f32()
 	for i in range(VOICES):
 		v_noise[i] = 1 + i * 9973
 
@@ -129,6 +137,8 @@ func choke_channel(ch: int) -> void:
 	v_amp[ch] = 0.0
 
 func note_on(note: int, octave: int, instrument: int, fx1: String = "----", fx2: String = "----", velocity: float = 1.0, channel: int = -1) -> void:
+	if live and channel >= 0 and live.is_muted(channel):
+		return
 	var vi: int = _alloc(channel)
 	var inst: Instrument = get_instrument(instrument)
 	var fx: Dictionary = Dsp.parse_fx_pair(fx1, fx2)
@@ -157,6 +167,12 @@ func note_on(note: int, octave: int, instrument: int, fx1: String = "----", fx2:
 	v_spos[vi] = 0.0
 	v_sinc[vi] = 1.0
 	v_noise[vi] = maxi(1, randi() % 2147483646)
+
+	# live XY A → filter bias / start pitch influence
+	if live:
+		v_fbias[vi] = live.xy_a.x
+		if live.xy_a.y > 0.6:
+			v_spitch[vi] = 0.7 + live.xy_a.y * 1.2
 
 	if fx.has("V"):
 		v_vel[vi] = clampf(float(fx["V"]) / 128.0, 0.05, 1.5)
@@ -199,6 +215,7 @@ func note_on(note: int, octave: int, instrument: int, fx1: String = "----", fx2:
 		var root_f: float = Dsp.midi_freq(inst.pcm_root)
 		v_sinc[vi] = (freq / maxf(root_f, 1.0)) * (inst.pcm_rate / Dsp.SR)
 		v_spos[vi] = float(maxi(0, inst.pcm_start))
+		v_spos0[vi] = v_spos[vi]
 
 func _alloc(channel: int) -> int:
 	if channel >= 0 and channel < CH:
@@ -213,10 +230,24 @@ func _process(_delta: float) -> void:
 	if playback == null:
 		_grab()
 		return
+	_apply_live_bus()
 	var need: int = playback.get_frames_available()
 	if need <= 0:
 		return
 	_render(mini(need, MAX_FRAMES))
+
+func _apply_live_bus() -> void:
+	if live == null:
+		return
+	if live.kill_on:
+		stop_all()
+		live.clear_kill()
+	# XY B → delay bus (only costs when wet>0)
+	bus_delay_wet = live.xy_b.x * 0.55
+	bus_delay_time = 0.08 + live.xy_b.y * 0.45
+	bus_dist = live.xy_a.y * 0.85 if live.xy_a.y > 0.05 else 0.0
+	if live.glitch_on:
+		bus_dist = maxf(bus_dist, live.glitch_amt * 0.9)
 
 func _render(n: int) -> void:
 	if n <= 0:
@@ -230,7 +261,30 @@ func _render(n: int) -> void:
 	if use_delay:
 		d_samp = clampi(int(bus_delay_time * Dsp.SR), 1, delay_n - 1)
 
+	var do_glitch: bool = live != null and live.glitch_on and live.glitch_amt > 0.01
+	var crush_n: int = 1
+	if do_glitch:
+		crush_n = clampi(int(1.0 + live.glitch_amt * 48.0), 1, 64)
+	var do_retrig: bool = live != null and (live.retrig_on or live.stutter_on)
+	var stutter_every: int = 0
+	if live and live.stutter_on:
+		stutter_every = clampi(int(Dsp.SR * (0.02 + (1.0 - live.stutter_rate) * 0.12)), 200, 8000)
+
 	for i in range(n):
+		# stutter / retrig: snap sample voices back to start periodically
+		if do_retrig and stutter_every > 0:
+			_stutter_phase += 1.0
+			if int(_stutter_phase) % stutter_every == 0:
+				for vi in range(VOICES):
+					if v_on[vi] != 0 and v_src[vi] == 1:
+						v_spos[vi] = v_spos0[vi]
+						v_age[vi] = 0.0
+						v_amp[vi] = 1.0
+		elif do_retrig and live.retrig_on and (i & 255) == 0:
+			for vi in range(VOICES):
+				if v_on[vi] != 0 and v_src[vi] == 1:
+					v_spos[vi] = v_spos0[vi]
+
 		var mix := 0.0
 		for vi in range(VOICES):
 			if v_on[vi] == 0:
@@ -242,6 +296,17 @@ func _render(n: int) -> void:
 			else:
 				s = _tick_synth(vi, inv)
 			mix += s * v_gain[vi]
+
+		if do_glitch:
+			_glitch_ctr += 1
+			if _glitch_ctr >= crush_n:
+				_glitch_ctr = 0
+				_glitch_hold = mix
+			mix = _glitch_hold
+			# mild bit reduction
+			var bits: float = 4.0 + (1.0 - live.glitch_amt) * 12.0
+			var steps: float = pow(2.0, bits)
+			mix = floor(mix * steps) / steps
 
 		if use_dist:
 			mix = Dsp.soft_clip_drive(mix, bus_dist)
@@ -258,7 +323,8 @@ func _render(n: int) -> void:
 		master_lim = maxf(peak, master_lim * 0.9993)
 		if master_lim > master_ceiling:
 			mix *= master_ceiling / master_lim
-		_out[i] = Vector2(Dsp.soft_clip(mix), Dsp.soft_clip(mix))
+		var c: float = Dsp.soft_clip(mix)
+		_out[i] = Vector2(c, c)
 
 	playback.push_buffer(_out)
 
