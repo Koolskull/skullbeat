@@ -1,55 +1,67 @@
 # SKULLBEAT
 
 Tracker-style drum machine for **Xogot / Godot 4** on iPad.  
-K-OS III aesthetic · mono channels · Koala-style pads.
+K-OS III aesthetic · mono channels · Koala pads · LGPT/LSDJ scene map.
 
-## Architecture (minimal layers)
+## Architecture
 
 ```
-UI (main.gd)          pattern edit, playhead paint, input
-    │
-SbClock               tempo / step events only
-    │
-SynthEngine           voice pool + mix + generator fill
-    │
-Instrument            data only (sample | synth | fx slots)
-    │
-Dsp                   pure math: env, noise, clip, freq, bake
+UI (main.gd)     multi-window host + pattern banks
+SceneMap         top-left 2×3 map (tap / Shift+arrows)
+SbClock          tempo / steps
+LiveFx           glitch · retrig · stutter · XY · mute
+ProjectStore     save / load / export JSON
+SynthEngine      voice pool + mix
+Instrument       data only
+Dsp              pure math
 ```
 
-Each layer does one job. No DSP in UI. No UI in engine. No state in `Dsp`.
+## Scene map (top-left)
 
-### Cost rules
-- **Sample XOR synth** per voice (never both)
-- Master path = gain + soft clip (bus FX wet defaults **0**)
-- Hard cap **384 frames/tick** so the clock never starves
-- Playhead recolors **2 rows**, not the whole grid
-- Voices stored as parallel packed arrays (no dict lookup in render)
+```
+PHR  LCH  SET
+TBL  PRJ  EXP
+```
 
-### Scripts
-| File | Role |
-|------|------|
-| `scripts/dsp.gd` | Pure DSP units |
-| `scripts/instrument.gd` | Super-instrument data |
-| `scripts/synth_engine.gd` | Mixer / voices / generator |
-| `scripts/clock.gd` | Step clock |
-| `scripts/main.gd` | Tracker UI |
-| `scripts/sample_import.gd` | WAV / AudioShare |
-| `scripts/auv3_host.gd` | AUv3 shelved stub |
-| `docs/IOS_AUDIO.md` | iOS audio roadmap |
+| Cell | Window |
+|------|--------|
+| **PHR** | Phrase tracker |
+| **LCH** | Live clip launcher + FX + XY pads |
+| **SET** | Project settings (name, BPM) |
+| **TBL** | Table view |
+| **PRJ** | Save / load projects |
+| **EXP** | Export song + import sample |
+
+- **Keyboard:** hold **Shift + arrows** to move map (LGPT/LSDJ style)
+- **Touch:** tap a map cell
+
+## Live launcher (LCH)
+
+- **A B C D** — clip banks (4 phrase banks)
+- **CH1–4** — channel mute
+- **GLITCH / RTRG / STUT / KILL** — performance FX
+- **XY A** — X=filter bias · Y=drive/dist
+- **XY B** — X=delay wet · Y=delay time
+
+Keys: **G** glitch · **T** retrig · **Y** stutter · **K** kill
+
+## Project
+
+- **SAVE** → `user://projects/<NAME>.skull.json`
+- **EXPORT** → tracker text dump + JSON twin
+- **Ctrl/Cmd+S** save
 
 ## Tracker
-4 channels · `NT OC IN FX1 FX2` · phrase / table toggle per channel  
-FX letters: **V**el **D**ecay **F**ilter **M**od **P**itch **S**tart-pitch
 
-## Keys (Koala-style)
+4 channels · `NT OC IN FX1 FX2` · mono choke  
+FX: **V**el **D**ecay **F**ilter **M**od **P**itch **S**tart-pitch
+
+## Keys
+
 ```
-1 2 3 4     pads 1–4
-Q W E R     pads 5–8
-A S D F     pads 9–12
-Z X C V     pads 13–16
-SPACE play/stop · 0 REC · I import · U AudioShare
+1 2 3 4 / Q W E R / A S D F / Z X C V   pads
+SPACE play · 0 REC · I import · U AudioShare
+Shift+arrows  scene map
 ```
 
-## Open in Xogot
-Pull `main` → open project → run `scenes/main.tscn`.
+Pull `main` in Xogot → open project → run.
