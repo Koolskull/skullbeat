@@ -12,13 +12,12 @@ var kill_on: bool = false
 
 var glitch_amt: float = 0.0
 var stutter_rate: float = 0.25
-var xy_a: Vector2 = Vector2(0.5, 0.5)
+var xy_a: Vector2 = Vector2(0.5, 0.0)
 var xy_b: Vector2 = Vector2(0.0, 0.0)
 
 var active_bank: int = 0
 var muted: Array = [false, false, false, false]
 
-# mixer — linear gains 0..1.5 (1.0 = unity)
 var ch_level: Array = [1.0, 1.0, 1.0, 1.0]
 var master_level: float = 1.0
 
@@ -29,7 +28,7 @@ func reset() -> void:
 	kill_on = false
 	glitch_amt = 0.0
 	stutter_rate = 0.25
-	xy_a = Vector2(0.5, 0.5)
+	xy_a = Vector2(0.5, 0.0)
 	xy_b = Vector2(0.0, 0.0)
 	active_bank = 0
 	muted = [false, false, false, false]
