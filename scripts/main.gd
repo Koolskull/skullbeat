@@ -4,12 +4,25 @@ extends Control
 ## 4 channels · note | octave | instrument | fx1 | fx2
 ## Per-channel Tables (subroutine style like LittleGPTracker / LSDJ)
 ## Console font · dynamic screen fill · REC + tap-drag edit
+## Koala-style keyboard → MPC pads (left hand 4x4)
 ## K-OS III visual rules: no rounded corners, sharp, black, yellow accents
 
 const CHANNELS := 4
-const STEPS := 16          # phrase length (classic)
-const TABLE_STEPS := 16   # table length
+const STEPS := 16
+const TABLE_STEPS := 16
 const NOTE_NAMES := ["C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"]
+
+# Koala Sampler exact pad layout (left hand = MPC)
+# 1 2 3 4
+# Q W E R
+# A S D F
+# Z X C V
+const KOALA_PADS := {
+	KEY_1: 0, KEY_2: 1, KEY_3: 2, KEY_4: 3,
+	KEY_Q: 4, KEY_W: 5, KEY_E: 6, KEY_R: 7,
+	KEY_A: 8, KEY_S: 9, KEY_D: 10, KEY_F: 11,
+	KEY_Z: 12, KEY_X: 13, KEY_C: 14, KEY_V: 15
+}
 
 # Visual
 const COL_BG := Color("#000000")
@@ -22,34 +35,28 @@ const COL_TEXT := Color("#cccccc")
 const COL_TEXT_DIM := Color("#666666")
 const COL_TEXT_BRIGHT := Color("#ffffff")
 const COL_REC := Color("#ff2222")
-const COL_SELECTED := Color("#224422")
 
 var bpm: float = 128.0
 var is_playing := false
-var is_recording := false          # REC mode: drag-to-edit enabled
+var is_recording := false
 var current_step := 0
 var step_timer := 0.0
-var visible_rows := 16             # calculated dynamically
+var visible_rows := 16
 
-# Data model
-# phrases[ch][step] = {note:int (-1 empty), oct:int, inst:int, fx1:String, fx2:String}
 var phrases: Array = []
-# tables[ch][row] = {cmd1:String, val1:String, cmd2:String, val2:String, hop:int}  (simplified)
 var tables: Array = []
-var channel_view_mode: Array = []  # 0 = phrase, 1 = table for that channel
+var channel_view_mode: Array = []
 
-# UI state
 var selected_ch := 0
 var selected_step := 0
-var selected_col := 0              # 0=note 1=oct 2=inst 3=fx1 4=fx2
+var selected_col := 0
 var drag_start_y := 0.0
 var drag_start_value := 0
 var is_dragging := false
 
-# UI refs
 var header_bar: HBoxContainer
 var channel_containers: Array = []
-var step_labels: Array = []        # [ch][step] -> various Labels for the columns
+var step_labels: Array = []
 var status_label: Label
 var rec_btn: Button
 var play_btn: Button
@@ -67,19 +74,17 @@ func _init_data() -> void:
 		for s in range(STEPS):
 			phrase.append({"note": -1, "oct": 4, "inst": 0, "fx1": "----", "fx2": "----"})
 		phrases.append(phrase)
-		
 		var table: Array = []
 		for r in range(TABLE_STEPS):
 			table.append({"cmd1": "----", "val1": "00", "cmd2": "----", "val2": "00"})
 		tables.append(table)
-		channel_view_mode.append(0)  # start in phrase view
-	
-	# Seed a simple pattern so something is visible
-	phrases[0][0] = {"note": 0, "oct": 3, "inst": 1, "fx1": "----", "fx2": "----"}  # C-3
+		channel_view_mode.append(0)
+	# Seed
+	phrases[0][0] = {"note": 0, "oct": 3, "inst": 1, "fx1": "----", "fx2": "----"}
 	phrases[0][4] = {"note": 0, "oct": 3, "inst": 1, "fx1": "----", "fx2": "----"}
 	phrases[0][8] = {"note": 0, "oct": 3, "inst": 1, "fx1": "----", "fx2": "----"}
 	phrases[0][12] = {"note": 0, "oct": 3, "inst": 1, "fx1": "----", "fx2": "----"}
-	phrases[1][4] = {"note": 7, "oct": 4, "inst": 2, "fx1": "----", "fx2": "----"}  # G-4
+	phrases[1][4] = {"note": 7, "oct": 4, "inst": 2, "fx1": "----", "fx2": "----"}
 	phrases[1][12] = {"note": 7, "oct": 4, "inst": 2, "fx1": "----", "fx2": "----"}
 	phrases[2][0] = {"note": 0, "oct": 5, "inst": 3, "fx1": "----", "fx2": "----"}
 	phrases[2][2] = {"note": 0, "oct": 5, "inst": 3, "fx1": "----", "fx2": "----"}
@@ -102,10 +107,100 @@ func _process(delta: float) -> void:
 func _advance_step() -> void:
 	current_step = (current_step + 1) % STEPS
 	_refresh_all_channels()
-	# TODO: actual note triggering + table execution
+
+func _unhandled_input(event: InputEvent) -> void:
+	if not (event is InputEventKey and event.pressed and not event.echo):
+		return
+	var key = event.keycode
+
+	# === Koala / MPC pads (left hand 4x4) ===
+	if KOALA_PADS.has(key):
+		var pad_idx: int = KOALA_PADS[key]
+		_on_pad_triggered(pad_idx)
+		get_viewport().set_input_as_handled()
+		return
+
+	# === Transport (Koala style) ===
+	match key:
+		KEY_SPACE:
+			if is_playing:
+				_on_stop()
+			else:
+				_toggle_play()
+			get_viewport().set_input_as_handled()
+		KEY_0:
+			_toggle_rec()
+			get_viewport().set_input_as_handled()
+		KEY_EQUAL, KEY_KP_ADD:
+			_change_bpm(1)
+			get_viewport().set_input_as_handled()
+		KEY_MINUS, KEY_KP_SUBTRACT:
+			_change_bpm(-1)
+			get_viewport().set_input_as_handled()
+
+		# Cursor navigation (tracker style)
+		KEY_UP:
+			selected_step = max(0, selected_step - 1)
+			_refresh_all_channels()
+			status_label.text = "STEP %02d" % selected_step
+			get_viewport().set_input_as_handled()
+		KEY_DOWN:
+			selected_step = min(STEPS - 1, selected_step + 1)
+			_refresh_all_channels()
+			status_label.text = "STEP %02d" % selected_step
+			get_viewport().set_input_as_handled()
+		KEY_LEFT:
+			if selected_col > 0:
+				selected_col -= 1
+			else:
+				selected_ch = max(0, selected_ch - 1)
+				selected_col = 4
+			_refresh_all_channels()
+			get_viewport().set_input_as_handled()
+		KEY_RIGHT:
+			if selected_col < 4:
+				selected_col += 1
+			else:
+				selected_ch = min(CHANNELS - 1, selected_ch + 1)
+				selected_col = 0
+			_refresh_all_channels()
+			get_viewport().set_input_as_handled()
+
+		# Clear current step
+		KEY_BACKSPACE, KEY_DELETE:
+			if channel_view_mode[selected_ch] == 0:
+				phrases[selected_ch][selected_step] = {"note": -1, "oct": 4, "inst": 0, "fx1": "----", "fx2": "----"}
+				_refresh_channel(selected_ch)
+				status_label.text = "CLEARED CH%d STEP%02d" % [selected_ch + 1, selected_step]
+			get_viewport().set_input_as_handled()
+
+func _on_pad_triggered(pad_idx: int) -> void:
+	# Map 16 pads → instruments 1-16 (or notes). Live play + optional record.
+	var inst = pad_idx + 1
+	var note = pad_idx % 12          # chromatic-ish across the grid
+	var oct = 3 + int(pad_idx / 12)  # bottom rows lower, top higher-ish
+
+	# Always "live" feedback
+	status_label.text = "PAD %02d  INST %02X  %s%d" % [pad_idx + 1, inst, NOTE_NAMES[note], oct]
+
+	# If REC is on, write into the currently selected step of selected channel
+	if is_recording and channel_view_mode[selected_ch] == 0:
+		phrases[selected_ch][selected_step] = {
+			"note": note,
+			"oct": oct,
+			"inst": inst,
+			"fx1": "----",
+			"fx2": "----"
+		}
+		_refresh_channel(selected_ch)
+		# Optional: auto-advance step (classic tracker feel)
+		selected_step = (selected_step + 1) % STEPS
+		_refresh_all_channels()
+		status_label.text = "REC PAD%02d → CH%d STEP%02d" % [pad_idx + 1, selected_ch + 1, selected_step]
+
+	# TODO: actual sample / synth trigger here once audio engine exists
 
 func _build_ui() -> void:
-	# Background
 	var bg := ColorRect.new()
 	bg.color = COL_BG
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -121,7 +216,6 @@ func _build_ui() -> void:
 	root.offset_bottom = -4
 	add_child(root)
 	
-	# === HEADER ===
 	header_bar = HBoxContainer.new()
 	header_bar.add_theme_constant_override("separation", 8)
 	root.add_child(header_bar)
@@ -133,7 +227,7 @@ func _build_ui() -> void:
 	header_bar.add_child(title)
 	
 	var mode_lbl := Label.new()
-	mode_lbl.text = "TRACKER · 4CH"
+	mode_lbl.text = "TRACKER · KOALA PADS"
 	mode_lbl.add_theme_color_override("font_color", COL_TEXT_DIM)
 	mode_lbl.add_theme_font_size_override("font_size", 11)
 	header_bar.add_child(mode_lbl)
@@ -167,7 +261,6 @@ func _build_ui() -> void:
 	stop_btn.pressed.connect(_on_stop)
 	header_bar.add_child(stop_btn)
 	
-	# === CHANNELS ROW ===
 	var channels_row := HBoxContainer.new()
 	channels_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	channels_row.add_theme_constant_override("separation", 3)
@@ -187,7 +280,6 @@ func _build_ui() -> void:
 		ch_vbox.add_theme_constant_override("separation", 0)
 		ch_panel.add_child(ch_vbox)
 		
-		# Channel header (click to switch phrase/table view)
 		var ch_header := Button.new()
 		ch_header.text = "CH%d  PHRASE" % (ch + 1)
 		ch_header.focus_mode = Control.FOCUS_NONE
@@ -197,7 +289,6 @@ func _build_ui() -> void:
 		ch_header.pressed.connect(func(): _toggle_channel_view(ch_idx))
 		ch_vbox.add_child(ch_header)
 		
-		# Column headers
 		var col_hdr := HBoxContainer.new()
 		col_hdr.add_theme_constant_override("separation", 0)
 		ch_vbox.add_child(col_hdr)
@@ -210,7 +301,6 @@ func _build_ui() -> void:
 			l.add_theme_font_size_override("font_size", 9)
 			col_hdr.add_child(l)
 		
-		# Steps container (will be filled dynamically)
 		var steps_box := VBoxContainer.new()
 		steps_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		steps_box.add_theme_constant_override("separation", 0)
@@ -224,16 +314,14 @@ func _build_ui() -> void:
 		})
 		step_labels.append([])
 	
-	# Status
 	status_label = Label.new()
-	status_label.text = "REC OFF · TAP CELL + DRAG TO EDIT WHEN REC ON · TAP CH HEADER TO TOGGLE TABLE"
+	status_label.text = "KOALA PADS  1 2 3 4 / Q W E R / A S D F / Z X C V   ·  SPACE=PLAY  0=REC  ARROWS=NAV"
 	status_label.add_theme_color_override("font_color", COL_TEXT_DIM)
 	status_label.add_theme_font_size_override("font_size", 10)
 	root.add_child(status_label)
 
 func _recalc_layout() -> void:
-	# Dynamically decide how many rows we can show based on available height
-	var avail_h = size.y - 80  # header + status approx
+	var avail_h = size.y - 80
 	if avail_h < 100:
 		avail_h = 400
 	var row_h = 18
@@ -243,22 +331,18 @@ func _recalc_layout() -> void:
 func _rebuild_step_rows() -> void:
 	for ch in range(CHANNELS):
 		var steps_box: VBoxContainer = channel_containers[ch]["steps_box"]
-		# Clear old
 		for child in steps_box.get_children():
 			child.queue_free()
 		step_labels[ch].clear()
-		
 		for s in range(visible_rows):
 			var row := HBoxContainer.new()
 			row.add_theme_constant_override("separation", 0)
 			row.custom_minimum_size.y = 18
-			
 			var bg_rect := ColorRect.new()
 			bg_rect.color = COL_ROW_ALT if s % 4 == 0 else COL_BG
 			bg_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 			row.add_child(bg_rect)
 			row.move_child(bg_rect, 0)
-			
 			var cells: Array = []
 			for col in range(5):
 				var cell := Label.new()
@@ -270,10 +354,8 @@ func _rebuild_step_rows() -> void:
 				cell.gui_input.connect(_on_cell_input.bind(ch, s, col))
 				row.add_child(cell)
 				cells.append(cell)
-			
 			steps_box.add_child(row)
 			step_labels[ch].append(cells)
-	
 	_refresh_all_channels()
 
 func _refresh_all_channels() -> void:
@@ -283,37 +365,28 @@ func _refresh_all_channels() -> void:
 func _refresh_channel(ch: int) -> void:
 	var mode = channel_view_mode[ch]
 	var header: Button = channel_containers[ch]["header"]
-	if mode == 0:
-		header.text = "CH%d  PHRASE" % (ch + 1)
-	else:
-		header.text = "CH%d  TABLE" % (ch + 1)
-	
+	header.text = "CH%d  %s" % [ch + 1, "TABLE" if mode == 1 else "PHRASE"]
 	for s in range(min(visible_rows, STEPS)):
 		var cells: Array = step_labels[ch][s]
 		if mode == 0:
-			# Phrase view
 			var data = phrases[ch][s]
-			var note_str = "---" if data.note < 0 else NOTE_NAMES[data.note]
-			cells[0].text = note_str
+			cells[0].text = "---" if data.note < 0 else NOTE_NAMES[data.note]
 			cells[1].text = "%d" % data.oct if data.note >= 0 else "-"
 			cells[2].text = "%02X" % data.inst if data.note >= 0 else "--"
 			cells[3].text = data.fx1
 			cells[4].text = data.fx2
 		else:
-			# Table view (simplified 4 columns for now)
 			var tdata = tables[ch][s]
 			cells[0].text = tdata.cmd1
 			cells[1].text = tdata.val1
 			cells[2].text = tdata.cmd2
 			cells[3].text = tdata.val2
 			cells[4].text = ""
-		
-		# Playhead + selection highlighting
 		for c in range(5):
 			var col_color = COL_TEXT
 			if is_playing and s == current_step and mode == 0:
 				col_color = COL_PLAYHEAD
-			elif is_recording and ch == selected_ch and s == selected_step and c == selected_col:
+			elif ch == selected_ch and s == selected_step and c == selected_col:
 				col_color = COL_ACTIVE
 			cells[c].add_theme_color_override("font_color", col_color)
 
@@ -329,8 +402,8 @@ func _on_cell_input(event: InputEvent, ch: int, step: int, col: int) -> void:
 			status_label.text = "EDIT CH%d STEP%02d COL%d" % [ch+1, step, col]
 		_refresh_all_channels()
 	elif event is InputEventMouseMotion and is_dragging and is_recording:
-		var delta_y = drag_start_y - event.position.y  # up = increase
-		var steps = int(delta_y / 12.0)  # sensitivity
+		var delta_y = drag_start_y - event.position.y
+		var steps = int(delta_y / 12.0)
 		if steps != 0:
 			_apply_drag_value(ch, step, col, drag_start_value + steps)
 			_refresh_channel(ch)
@@ -345,37 +418,31 @@ func _get_current_value(ch: int, step: int, col: int) -> int:
 			1: return d.oct
 			2: return d.inst
 			_: return 0
-	else:
-		return 0  # tables later
+	return 0
 
 func _apply_drag_value(ch: int, step: int, col: int, val: int) -> void:
 	if channel_view_mode[ch] != 0:
-		return  # table editing later
+		return
 	var d = phrases[ch][step]
 	match col:
-		0:  # note
+		0:
 			d.note = clamp(val, -1, 11)
-			if d.note < 0:
-				d.note = -1
-		1:  # octave
-			d.oct = clamp(val, 0, 8)
-		2:  # instrument
-			d.inst = clamp(val, 0, 63)
-		3, 4:
-			pass  # FX text editing later (need hex or command list)
+			if d.note < 0: d.note = -1
+		1: d.oct = clamp(val, 0, 8)
+		2: d.inst = clamp(val, 0, 63)
 	phrases[ch][step] = d
 
 func _toggle_channel_view(ch: int) -> void:
 	channel_view_mode[ch] = 1 - channel_view_mode[ch]
 	_refresh_channel(ch)
-	status_label.text = "CH%d now showing %s" % [ch+1, "TABLE" if channel_view_mode[ch] == 1 else "PHRASE"]
+	status_label.text = "CH%d → %s" % [ch+1, "TABLE" if channel_view_mode[ch] == 1 else "PHRASE"]
 
 func _toggle_rec() -> void:
 	is_recording = not is_recording
 	if is_recording:
 		rec_btn.text = "REC*"
 		_style_btn_active(rec_btn, true)
-		status_label.text = "REC ON · TAP + DRAG CELLS TO EDIT VALUES"
+		status_label.text = "REC ON · PADS WRITE TO CURSOR · DRAG CELLS · 0 TOGGLE"
 	else:
 		rec_btn.text = "REC"
 		_style_btn_active(rec_btn, false)
