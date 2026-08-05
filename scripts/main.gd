@@ -40,7 +40,7 @@ var play_btn: Button
 var bpm_label: Label
 var status_label: Label
 
-# Audio players (one per track for polyphony-ish)
+# Audio players (one per track)
 var players: Array = []
 
 func _ready() -> void:
@@ -50,7 +50,7 @@ func _ready() -> void:
 		for s in range(STEPS):
 			row.append(false)
 		pattern.append(row)
-		
+	
 	for sc in range(SCENES):
 		var copy: Array = []
 		for t in range(TRACKS):
@@ -60,7 +60,7 @@ func _ready() -> void:
 			copy.append(row)
 		scenes.append(copy)
 	
-	# Seed a basic kick/snare pattern so it makes noise immediately
+	# Seed a basic kick/snare/hat pattern
 	pattern[0][0] = true
 	pattern[0][8] = true
 	pattern[1][4] = true
@@ -74,9 +74,13 @@ func _ready() -> void:
 	pattern[2][12] = true
 	pattern[2][14] = true
 	
+	# Store seed into scene 0
+	_store_to_scene(0)
+	
 	_build_ui()
 	_setup_audio()
 	_apply_pattern_to_ui()
+	_highlight_active_scene()
 
 func _process(delta: float) -> void:
 	if not is_playing:
@@ -88,36 +92,28 @@ func _process(delta: float) -> void:
 		_advance_step()
 
 func _advance_step() -> void:
-	# Clear previous playhead visual
 	_update_playhead_visual(current_step, false)
-	
 	current_step = (current_step + 1) % STEPS
 	_update_playhead_visual(current_step, true)
-	
-	# Trigger any active notes on this step
 	for t in range(TRACKS):
 		if pattern[t][current_step]:
 			_play_track(t)
 
 func _play_track(track: int) -> void:
 	if track < players.size() and players[track]:
+		# Will be silent until streams are assigned.
+		# Next pass: procedural generators or sample bank.
 		players[track].play()
 
 func _setup_audio() -> void:
-	# Create simple procedural-ish players.
-	# For v0 we use AudioStreamPlayer with a short generated tone per track.
-	# Later: replace with sample loading (WAV).
 	for t in range(TRACKS):
 		var p := AudioStreamPlayer.new()
 		p.name = "Player_%d" % t
 		add_child(p)
 		players.append(p)
-		# Placeholder: we will generate a short click/noise on demand later.
-		# For now just leave stream null; user can assign samples in editor
-		# or we expand with AudioStreamGenerator in next pass.
+		# TODO: assign AudioStreamWAV or use AudioStreamGenerator for basic synth drums
 
 func _build_ui() -> void:
-	# Full black background
 	var bg := ColorRect.new()
 	bg.color = COL_BG
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -135,7 +131,7 @@ func _build_ui() -> void:
 	
 	# === HEADER ===
 	var header := HBoxContainer.new()
-	header.add_theme_constant_override("separation", 12)
+	header.add_theme_constant_override("separation", 10)
 	root.add_child(header)
 	
 	var title := Label.new()
@@ -145,7 +141,7 @@ func _build_ui() -> void:
 	header.add_child(title)
 	
 	var subtitle := Label.new()
-	subtitle.text = "· K-OS III · STEP + SCENE"
+	subtitle.text = "· K-OS III"
 	subtitle.add_theme_color_override("font_color", COL_TEXT_DIM)
 	subtitle.add_theme_font_size_override("font_size", 12)
 	header.add_child(subtitle)
@@ -160,7 +156,6 @@ func _build_ui() -> void:
 	bpm_label.add_theme_font_size_override("font_size", 14)
 	header.add_child(bpm_label)
 	
-	# Transport buttons
 	play_btn = _make_button("PLAY", 70)
 	play_btn.pressed.connect(_on_play_pressed)
 	header.add_child(play_btn)
@@ -173,7 +168,6 @@ func _build_ui() -> void:
 	clear_btn.pressed.connect(_on_clear_pressed)
 	header.add_child(clear_btn)
 	
-	# BPM controls
 	var bpm_down := _make_button("-", 36)
 	bpm_down.pressed.connect(func(): _change_bpm(-1))
 	header.add_child(bpm_down)
@@ -225,12 +219,11 @@ func _build_ui() -> void:
 	seq_inner.add_child(seq_header)
 	
 	var grid := GridContainer.new()
-	grid.columns = STEPS + 1  # +1 for track name
+	grid.columns = STEPS + 1
 	grid.add_theme_constant_override("h_separation", 2)
 	grid.add_theme_constant_override("v_separation", 2)
 	seq_inner.add_child(grid)
 	
-	# Empty corner + step numbers
 	var empty := Label.new()
 	empty.custom_minimum_size = Vector2(48, 20)
 	grid.add_child(empty)
@@ -268,7 +261,7 @@ func _build_ui() -> void:
 	
 	# RIGHT: Scene launcher
 	var scenes_col := VBoxContainer.new()
-	scenes_col.custom_minimum_size.x = 90
+	scenes_col.custom_minimum_size.x = 100
 	scenes_col.add_theme_constant_override("separation", 4)
 	main_row.add_child(scenes_col)
 	
@@ -279,16 +272,20 @@ func _build_ui() -> void:
 	scenes_col.add_child(scenes_label)
 	
 	for sc in range(SCENES):
-		var btn := _make_button("S%d" % (sc + 1), 80)
-		btn.custom_minimum_size.y = 36
+		var btn := _make_button("S%d" % (sc + 1), 90)
+		btn.custom_minimum_size.y = 32
 		var sc_idx = sc
 		btn.pressed.connect(func(): _on_scene_pressed(sc_idx))
 		scenes_col.add_child(btn)
 		scene_buttons.append(btn)
 	
+	var store_btn := _make_button("STORE", 90)
+	store_btn.pressed.connect(_on_store_pressed)
+	scenes_col.add_child(store_btn)
+	
 	# Status bar
 	status_label = Label.new()
-	status_label.text = "READY · TOUCH STEPS TO TOGGLE · PADS FOR LIVE · SCENES STORE/RECALL"
+	status_label.text = "READY · TAP STEPS · PADS LIVE · STORE → ACTIVE SCENE · TAP SCENE TO LOAD"
 	status_label.add_theme_color_override("font_color", COL_TEXT_DIM)
 	status_label.add_theme_font_size_override("font_size", 11)
 	root.add_child(status_label)
@@ -366,7 +363,6 @@ func _update_playhead_visual(step: int, on: bool) -> void:
 	for t in range(TRACKS):
 		var btn: Button = step_buttons[t][step]
 		if on:
-			# Overlay playhead color while keeping active state
 			var sb := StyleBoxFlat.new()
 			sb.set_corner_radius_all(0)
 			sb.set_border_width_all(2)
@@ -381,41 +377,10 @@ func _update_playhead_visual(step: int, on: bool) -> void:
 		else:
 			_style_step_button(btn, pattern[t][step])
 
-func _on_step_toggled(track: int, step: int, pressed: bool) -> void:
-	pattern[track][step] = pressed
-	_style_step_button(step_buttons[track][step], pressed)
-	status_label.text = "T%d S%d %s" % [track + 1, step + 1, "ON" if pressed else "OFF"]
-
-func _on_pad_pressed(track: int) -> void:
-	_play_track(track)
-	status_label.text = "PAD %s" % TRACK_NAMES[track]
-	# Flash the pad briefly
-	var btn: Button = pad_buttons[track]
-	var original = btn.get_theme_stylebox("normal")
-	var flash := StyleBoxFlat.new()
-	flash.bg_color = COL_ACTIVE
-	flash.border_color = COL_ACTIVE
-	flash.set_border_width_all(1)
-	flash.set_corner_radius_all(0)
-	btn.add_theme_stylebox_override("normal", flash)
-	await get_tree().create_timer(0.08).timeout
-	_style_button(btn)
-
-func _on_scene_pressed(sc: int) -> void:
-	# Store current pattern into the scene if holding something? For now: load scene
-	# Simple behavior: tap = load that scene's pattern
-	# (Later: long press or separate store button)
-	active_scene = sc
-	# Deep copy scene into pattern
-	for t in range(TRACKS):
-		for s in range(STEPS):
-			pattern[t][s] = scenes[sc][t][s]
-	_apply_pattern_to_ui()
-	status_label.text = "LOADED SCENE %d" % (sc + 1)
-	# Visual feedback on scene buttons
+func _highlight_active_scene() -> void:
 	for i in range(SCENES):
 		var b: Button = scene_buttons[i]
-		if i == sc:
+		if i == active_scene:
 			var sb := StyleBoxFlat.new()
 			sb.bg_color = COL_ACTIVE
 			sb.border_color = COL_ACTIVE
@@ -426,15 +391,53 @@ func _on_scene_pressed(sc: int) -> void:
 		else:
 			_style_button(b)
 
+func _on_step_toggled(track: int, step: int, pressed: bool) -> void:
+	pattern[track][step] = pressed
+	_style_step_button(step_buttons[track][step], pressed)
+	status_label.text = "T%d S%d %s" % [track + 1, step + 1, "ON" if pressed else "OFF"]
+
+func _on_pad_pressed(track: int) -> void:
+	_play_track(track)
+	status_label.text = "PAD %s" % TRACK_NAMES[track]
+	var btn: Button = pad_buttons[track]
+	var flash := StyleBoxFlat.new()
+	flash.bg_color = COL_ACTIVE
+	flash.border_color = COL_ACTIVE
+	flash.set_border_width_all(1)
+	flash.set_corner_radius_all(0)
+	btn.add_theme_stylebox_override("normal", flash)
+	await get_tree().create_timer(0.08).timeout
+	_style_button(btn)
+
+func _on_scene_pressed(sc: int) -> void:
+	active_scene = sc
+	for t in range(TRACKS):
+		for s in range(STEPS):
+			pattern[t][s] = scenes[sc][t][s]
+	_apply_pattern_to_ui()
+	_highlight_active_scene()
+	status_label.text = "LOADED SCENE %d" % (sc + 1)
+
+func _on_store_pressed() -> void:
+	_store_to_scene(active_scene)
+	status_label.text = "STORED → SCENE %d" % (active_scene + 1)
+
+func _store_to_scene(sc: int) -> void:
+	if sc < 0 or sc >= SCENES:
+		return
+	for t in range(TRACKS):
+		for s in range(STEPS):
+			scenes[sc][t][s] = pattern[t][s]
+
 func _on_play_pressed() -> void:
 	if is_playing:
 		return
 	is_playing = true
-	current_step = -1  # so first advance goes to 0
+	current_step = -1
 	step_timer = 0.0
 	play_btn.text = "PLAYING"
 	status_label.text = "PLAYING @ %d BPM" % int(bpm)
-	_advance_step()  # start immediately
+	_advance_step()
 
 func _on_stop_pressed() -> void:
 	is_playing = false
@@ -455,12 +458,3 @@ func _change_bpm(delta: int) -> void:
 	bpm_label.text = "BPM %d" % int(bpm)
 	if is_playing:
 		status_label.text = "PLAYING @ %d BPM" % int(bpm)
-
-# Public helper so scenes can be stored from outside later
-func store_current_to_scene(sc: int) -> void:
-	if sc < 0 or sc >= SCENES:
-		return
-	for t in range(TRACKS):
-		for s in range(STEPS):
-			scenes[sc][t][s] = pattern[t][s]
-	status_label.text = "STORED → SCENE %d" % (sc + 1)
