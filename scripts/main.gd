@@ -1,22 +1,16 @@
 extends Control
 
-## ☦ SKULLBEAT — Tracker Mode
+## ☦ SKULLBEAT — Tracker Mode + Integrated Synth
 ## 4 channels · note | octave | instrument | fx1 | fx2
-## Per-channel Tables (subroutine style like LittleGPTracker / LSDJ)
-## Console font · dynamic screen fill · REC + tap-drag edit
-## Koala-style keyboard → MPC pads (left hand 4x4)
-## K-OS III visual rules: no rounded corners, sharp, black, yellow accents
+## Percussion + harmonic textures via SynthEngine
+## Koala-style keyboard → MPC pads
+## K-OS III aesthetic
 
 const CHANNELS := 4
 const STEPS := 16
 const TABLE_STEPS := 16
 const NOTE_NAMES := ["C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"]
 
-# Koala Sampler exact pad layout (left hand = MPC)
-# 1 2 3 4
-# Q W E R
-# A S D F
-# Z X C V
 const KOALA_PADS := {
 	KEY_1: 0, KEY_2: 1, KEY_3: 2, KEY_4: 3,
 	KEY_Q: 4, KEY_W: 5, KEY_E: 6, KEY_R: 7,
@@ -24,7 +18,6 @@ const KOALA_PADS := {
 	KEY_Z: 12, KEY_X: 13, KEY_C: 14, KEY_V: 15
 }
 
-# Visual
 const COL_BG := Color("#000000")
 const COL_PANEL := Color("#0a0a0a")
 const COL_BORDER := Color("#333333")
@@ -62,7 +55,11 @@ var rec_btn: Button
 var play_btn: Button
 var bpm_label: Label
 
+var synth: SynthEngine
+
 func _ready() -> void:
+	synth = SynthEngine.new()
+	add_child(synth)
 	_init_data()
 	_build_ui()
 	_recalc_layout()
@@ -79,21 +76,21 @@ func _init_data() -> void:
 			table.append({"cmd1": "----", "val1": "00", "cmd2": "----", "val2": "00"})
 		tables.append(table)
 		channel_view_mode.append(0)
-	# Seed
-	phrases[0][0] = {"note": 0, "oct": 3, "inst": 1, "fx1": "----", "fx2": "----"}
-	phrases[0][4] = {"note": 0, "oct": 3, "inst": 1, "fx1": "----", "fx2": "----"}
-	phrases[0][8] = {"note": 0, "oct": 3, "inst": 1, "fx1": "----", "fx2": "----"}
-	phrases[0][12] = {"note": 0, "oct": 3, "inst": 1, "fx1": "----", "fx2": "----"}
-	phrases[1][4] = {"note": 7, "oct": 4, "inst": 2, "fx1": "----", "fx2": "----"}
-	phrases[1][12] = {"note": 7, "oct": 4, "inst": 2, "fx1": "----", "fx2": "----"}
-	phrases[2][0] = {"note": 0, "oct": 5, "inst": 3, "fx1": "----", "fx2": "----"}
-	phrases[2][2] = {"note": 0, "oct": 5, "inst": 3, "fx1": "----", "fx2": "----"}
-	phrases[2][4] = {"note": 0, "oct": 5, "inst": 3, "fx1": "----", "fx2": "----"}
-	phrases[2][6] = {"note": 0, "oct": 5, "inst": 3, "fx1": "----", "fx2": "----"}
-	phrases[2][8] = {"note": 0, "oct": 5, "inst": 3, "fx1": "----", "fx2": "----"}
-	phrases[2][10] = {"note": 0, "oct": 5, "inst": 3, "fx1": "----", "fx2": "----"}
-	phrases[2][12] = {"note": 0, "oct": 5, "inst": 3, "fx1": "----", "fx2": "----"}
-	phrases[2][14] = {"note": 0, "oct": 5, "inst": 3, "fx1": "----", "fx2": "----"}
+	# Seed: kick on 1, snare on 2, hats on 3, bass texture on 4
+	phrases[0][0]  = {"note": 0, "oct": 2, "inst": 1,  "fx1": "----", "fx2": "----"}  # kick
+	phrases[0][8]  = {"note": 0, "oct": 2, "inst": 1,  "fx1": "----", "fx2": "----"}
+	phrases[1][4]  = {"note": 0, "oct": 3, "inst": 6,  "fx1": "----", "fx2": "----"}  # snare range
+	phrases[1][12] = {"note": 0, "oct": 3, "inst": 6,  "fx1": "----", "fx2": "----"}
+	phrases[2][0]  = {"note": 0, "oct": 5, "inst": 10, "fx1": "----", "fx2": "----"}  # hat
+	phrases[2][2]  = {"note": 0, "oct": 5, "inst": 10, "fx1": "----", "fx2": "----"}
+	phrases[2][4]  = {"note": 0, "oct": 5, "inst": 10, "fx1": "----", "fx2": "----"}
+	phrases[2][6]  = {"note": 0, "oct": 5, "inst": 10, "fx1": "----", "fx2": "----"}
+	phrases[2][8]  = {"note": 0, "oct": 5, "inst": 10, "fx1": "----", "fx2": "----"}
+	phrases[2][10] = {"note": 0, "oct": 5, "inst": 10, "fx1": "----", "fx2": "----"}
+	phrases[2][12] = {"note": 0, "oct": 5, "inst": 10, "fx1": "----", "fx2": "----"}
+	phrases[2][14] = {"note": 0, "oct": 5, "inst": 10, "fx1": "----", "fx2": "----"}
+	phrases[3][0]  = {"note": 0, "oct": 2, "inst": 16, "fx1": "----", "fx2": "----"}  # bass/texture
+	phrases[3][8]  = {"note": 7, "oct": 2, "inst": 16, "fx1": "----", "fx2": "----"}
 
 func _process(delta: float) -> void:
 	if not is_playing:
@@ -106,6 +103,11 @@ func _process(delta: float) -> void:
 
 func _advance_step() -> void:
 	current_step = (current_step + 1) % STEPS
+	# Trigger notes on this step across all channels
+	for ch in range(CHANNELS):
+		var d = phrases[ch][current_step]
+		if d.note >= 0:
+			synth.note_on(d.note, d.oct, d.inst, 1.0)
 	_refresh_all_channels()
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -113,14 +115,12 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	var key = event.keycode
 
-	# === Koala / MPC pads (left hand 4x4) ===
 	if KOALA_PADS.has(key):
 		var pad_idx: int = KOALA_PADS[key]
 		_on_pad_triggered(pad_idx)
 		get_viewport().set_input_as_handled()
 		return
 
-	# === Transport (Koala style) ===
 	match key:
 		KEY_SPACE:
 			if is_playing:
@@ -137,8 +137,6 @@ func _unhandled_input(event: InputEvent) -> void:
 		KEY_MINUS, KEY_KP_SUBTRACT:
 			_change_bpm(-1)
 			get_viewport().set_input_as_handled()
-
-		# Cursor navigation (tracker style)
 		KEY_UP:
 			selected_step = max(0, selected_step - 1)
 			_refresh_all_channels()
@@ -165,8 +163,6 @@ func _unhandled_input(event: InputEvent) -> void:
 				selected_col = 0
 			_refresh_all_channels()
 			get_viewport().set_input_as_handled()
-
-		# Clear current step
 		KEY_BACKSPACE, KEY_DELETE:
 			if channel_view_mode[selected_ch] == 0:
 				phrases[selected_ch][selected_step] = {"note": -1, "oct": 4, "inst": 0, "fx1": "----", "fx2": "----"}
@@ -175,15 +171,14 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 
 func _on_pad_triggered(pad_idx: int) -> void:
-	# Map 16 pads → instruments 1-16 (or notes). Live play + optional record.
 	var inst = pad_idx + 1
-	var note = pad_idx % 12          # chromatic-ish across the grid
-	var oct = 3 + int(pad_idx / 12)  # bottom rows lower, top higher-ish
+	var note = pad_idx % 12
+	var oct = 2 + int(pad_idx / 8)   # lower pads = lower octaves for kicks/basses
 
-	# Always "live" feedback
-	status_label.text = "PAD %02d  INST %02X  %s%d" % [pad_idx + 1, inst, NOTE_NAMES[note], oct]
+	# Live synthesis
+	synth.note_on(note, oct, inst, 1.0)
+	status_label.text = "PAD %02d → INST %02X  %s%d" % [pad_idx + 1, inst, NOTE_NAMES[note], oct]
 
-	# If REC is on, write into the currently selected step of selected channel
 	if is_recording and channel_view_mode[selected_ch] == 0:
 		phrases[selected_ch][selected_step] = {
 			"note": note,
@@ -193,12 +188,9 @@ func _on_pad_triggered(pad_idx: int) -> void:
 			"fx2": "----"
 		}
 		_refresh_channel(selected_ch)
-		# Optional: auto-advance step (classic tracker feel)
 		selected_step = (selected_step + 1) % STEPS
 		_refresh_all_channels()
 		status_label.text = "REC PAD%02d → CH%d STEP%02d" % [pad_idx + 1, selected_ch + 1, selected_step]
-
-	# TODO: actual sample / synth trigger here once audio engine exists
 
 func _build_ui() -> void:
 	var bg := ColorRect.new()
@@ -227,7 +219,7 @@ func _build_ui() -> void:
 	header_bar.add_child(title)
 	
 	var mode_lbl := Label.new()
-	mode_lbl.text = "TRACKER · KOALA PADS"
+	mode_lbl.text = "SYNTH · TRACKER · PADS"
 	mode_lbl.add_theme_color_override("font_color", COL_TEXT_DIM)
 	mode_lbl.add_theme_font_size_override("font_size", 11)
 	header_bar.add_child(mode_lbl)
@@ -315,17 +307,15 @@ func _build_ui() -> void:
 		step_labels.append([])
 	
 	status_label = Label.new()
-	status_label.text = "KOALA PADS  1 2 3 4 / Q W E R / A S D F / Z X C V   ·  SPACE=PLAY  0=REC  ARROWS=NAV"
+	status_label.text = "SYNTH LIVE  ·  PADS 1-4=KICK  5-8=SNARE  9-C=HAT  D+=TEXTURE/FM  ·  SPACE PLAY  0 REC"
 	status_label.add_theme_color_override("font_color", COL_TEXT_DIM)
 	status_label.add_theme_font_size_override("font_size", 10)
 	root.add_child(status_label)
 
 func _recalc_layout() -> void:
 	var avail_h = size.y - 80
-	if avail_h < 100:
-		avail_h = 400
-	var row_h = 18
-	visible_rows = clamp(int(avail_h / row_h), 8, STEPS)
+	if avail_h < 100: avail_h = 400
+	visible_rows = clamp(int(avail_h / 18), 8, STEPS)
 	_rebuild_step_rows()
 
 func _rebuild_step_rows() -> void:
@@ -399,7 +389,6 @@ func _on_cell_input(event: InputEvent, ch: int, step: int, col: int) -> void:
 			is_dragging = true
 			drag_start_y = event.position.y
 			drag_start_value = _get_current_value(ch, step, col)
-			status_label.text = "EDIT CH%d STEP%02d COL%d" % [ch+1, step, col]
 		_refresh_all_channels()
 	elif event is InputEventMouseMotion and is_dragging and is_recording:
 		var delta_y = drag_start_y - event.position.y
@@ -407,7 +396,7 @@ func _on_cell_input(event: InputEvent, ch: int, step: int, col: int) -> void:
 		if steps != 0:
 			_apply_drag_value(ch, step, col, drag_start_value + steps)
 			_refresh_channel(ch)
-	elif event is InputEventMouseButton and not event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+	elif event is InputEventMouseButton and not event.pressed:
 		is_dragging = false
 
 func _get_current_value(ch: int, step: int, col: int) -> int:
@@ -421,8 +410,7 @@ func _get_current_value(ch: int, step: int, col: int) -> int:
 	return 0
 
 func _apply_drag_value(ch: int, step: int, col: int, val: int) -> void:
-	if channel_view_mode[ch] != 0:
-		return
+	if channel_view_mode[ch] != 0: return
 	var d = phrases[ch][step]
 	match col:
 		0:
@@ -435,14 +423,13 @@ func _apply_drag_value(ch: int, step: int, col: int, val: int) -> void:
 func _toggle_channel_view(ch: int) -> void:
 	channel_view_mode[ch] = 1 - channel_view_mode[ch]
 	_refresh_channel(ch)
-	status_label.text = "CH%d → %s" % [ch+1, "TABLE" if channel_view_mode[ch] == 1 else "PHRASE"]
 
 func _toggle_rec() -> void:
 	is_recording = not is_recording
 	if is_recording:
 		rec_btn.text = "REC*"
 		_style_btn_active(rec_btn, true)
-		status_label.text = "REC ON · PADS WRITE TO CURSOR · DRAG CELLS · 0 TOGGLE"
+		status_label.text = "REC ON · PADS WRITE + PLAY · DRAG TO EDIT"
 	else:
 		rec_btn.text = "REC"
 		_style_btn_active(rec_btn, false)
@@ -450,8 +437,7 @@ func _toggle_rec() -> void:
 		status_label.text = "REC OFF"
 
 func _toggle_play() -> void:
-	if is_playing:
-		return
+	if is_playing: return
 	is_playing = true
 	current_step = -1
 	step_timer = 0.0
