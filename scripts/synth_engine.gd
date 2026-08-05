@@ -7,7 +7,7 @@ const CH := 4
 const PAD := 4
 const VOICES := CH + PAD
 const MAX_INST := 64
-const MAX_FRAMES := 384
+const MAX_FRAMES := 2048
 
 var player: AudioStreamPlayer
 var playback: AudioStreamGeneratorPlayback
@@ -70,7 +70,7 @@ func _ready() -> void:
 	add_child(player)
 	var gen := AudioStreamGenerator.new()
 	gen.mix_rate = Dsp.SR
-	gen.buffer_length = 0.1
+	gen.buffer_length = 0.15
 	player.stream = gen
 	player.volume_db = -3.0
 	player.play()
@@ -271,26 +271,24 @@ func _render(n: int) -> void:
 	var crush_n: int = 1
 	if do_glitch:
 		crush_n = clampi(int(1.0 + live.glitch_amt * 48.0), 1, 64)
-	var do_retrig: bool = live != null and (live.retrig_on or live.stutter_on)
-	var stutter_every: int = 0
-	if live and live.stutter_on:
-		stutter_every = clampi(int(Dsp.SR * (0.02 + (1.0 - live.stutter_rate) * 0.12)), 200, 8000)
 
-	for i in range(n):
-		# stutter / retrig: snap sample voices back to start periodically
-		if do_retrig and stutter_every > 0:
-			_stutter_phase += 1.0
-			if int(_stutter_phase) % stutter_every == 0:
-				for vi in range(VOICES):
-					if v_on[vi] != 0 and v_src[vi] == 1:
-						v_spos[vi] = v_spos0[vi]
-						v_age[vi] = 0.0
-						v_amp[vi] = 1.0
-		elif do_retrig and live.retrig_on and (i & 255) == 0:
+	# Block-rate retrig/stutter (once per buffer, not per sample)
+	if live != null and (live.retrig_on or live.stutter_on):
+		_stutter_phase += float(n)
+		var period: float = 512.0
+		if live.stutter_on:
+			period = float(clampi(int(Dsp.SR * (0.03 + (1.0 - live.stutter_rate) * 0.14)), 256, 8000))
+		elif live.retrig_on:
+			period = 1024.0
+		if _stutter_phase >= period:
+			_stutter_phase = 0.0
 			for vi in range(VOICES):
 				if v_on[vi] != 0 and v_src[vi] == 1:
 					v_spos[vi] = v_spos0[vi]
+					v_age[vi] = 0.0
+					v_amp[vi] = 1.0
 
+	for i in range(n):
 		var mix := 0.0
 		for vi in range(VOICES):
 			if v_on[vi] == 0:
@@ -314,7 +312,6 @@ func _render(n: int) -> void:
 				_glitch_ctr = 0
 				_glitch_hold = mix
 			mix = _glitch_hold
-			# mild bit reduction
 			var bits: float = 4.0 + (1.0 - live.glitch_amt) * 12.0
 			var steps: float = pow(2.0, bits)
 			mix = floor(mix * steps) / steps
