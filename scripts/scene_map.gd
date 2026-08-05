@@ -2,17 +2,16 @@ class_name SceneMap
 extends PanelContainer
 
 ## Tiny window map — top-left, LGPT/LSDJ style.
-## Shift+arrows move cursor (handled by host).
-## Touch taps cells directly.
+## Shift+arrows move cursor (host). Touch taps cells.
 
 signal scene_selected(id: int)
 
-const COLS := 3
+const COLS := 4
 const ROWS := 2
 
-## id order left→right, top→bottom
-const LABELS := ["PHR", "LCH", "SET", "TBL", "PRJ", "EXP"]
-const IDS := ["phrase", "launch", "settings", "table", "project", "export"]
+## left→right, top→bottom
+const LABELS := ["PHR", "LCH", "INS", "MIX", "TBL", "PRJ", "SET", "EXP"]
+const IDS := ["phrase", "launch", "inst", "mixer", "table", "project", "settings", "export"]
 
 const COL_BG := Color("#0a0a0a")
 const COL_BORDER := Color("#333333")
@@ -38,7 +37,7 @@ func _build() -> void:
 	sb.content_margin_top = 2
 	sb.content_margin_bottom = 2
 	add_theme_stylebox_override("panel", sb)
-	custom_minimum_size = Vector2(108, 48)
+	custom_minimum_size = Vector2(140, 48)
 
 	var grid := GridContainer.new()
 	grid.columns = COLS
@@ -80,9 +79,7 @@ func move(dx: int, dy: int) -> void:
 
 func _repaint() -> void:
 	for i in range(_cells.size()):
-		var here: bool = i == current
-		var cur: bool = i == cursor
-		_style_cell(_cells[i], here, cur)
+		_style_cell(_cells[i], i == current, i == cursor)
 
 func _style_cell(b: Button, here: bool, cur: bool) -> void:
 	var sb := StyleBoxFlat.new()
