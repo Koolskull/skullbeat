@@ -1,15 +1,8 @@
 class_name SynthEngine
 extends Node
 
-## Thin audio mixer.
-## Owns: voice pool, instrument bank, generator fill.
-## Does NOT own: UI, clock, import.
-##
-## Cost rules:
-##  - one source per voice (sample XOR synth)
-##  - master = gain + soft clip only (FX wet default 0)
-##  - hard cap frames/tick so sequencer never starves
-##  - zero alloc in steady-state render
+## Thin audio mixer over Dsp + Instrument.
+## Cost rules: sample XOR synth, master = gain+clip, hard frame cap.
 
 const CH := 4
 const PAD := 4
@@ -21,10 +14,9 @@ var player: AudioStreamPlayer
 var playback: AudioStreamGeneratorPlayback
 var instruments: Array = []
 
-# voice fields packed as parallel arrays (cache-friendly, no dict lookup)
 var v_on: PackedByteArray
 var v_algo: PackedByteArray
-var v_src: PackedByteArray          # 0=synth 1=sample
+var v_src: PackedByteArray
 var v_inst: PackedInt32Array
 var v_noise: PackedInt32Array
 var v_phase: PackedFloat32Array
@@ -46,7 +38,6 @@ var v_gain: PackedFloat32Array
 var master_gain := 0.85
 var master_lim := 0.0
 var master_ceiling := 0.95
-# optional bus FX — all wet 0 by default
 var bus_dist := 0.0
 var bus_delay_wet := 0.0
 var bus_delay_time := 0.28
@@ -81,6 +72,11 @@ func _grab() -> void:
 	if player and player.playing:
 		playback = player.get_stream_playback()
 
+func _f32() -> PackedFloat32Array:
+	var a := PackedFloat32Array()
+	a.resize(VOICES)
+	return a
+
 func _alloc_voices() -> void:
 	v_on = PackedByteArray()
 	v_on.resize(VOICES)
@@ -92,14 +88,21 @@ func _alloc_voices() -> void:
 	v_inst.resize(VOICES)
 	v_noise = PackedInt32Array()
 	v_noise.resize(VOICES)
-	for arr_name in [
-		"v_phase", "v_phase2", "v_freq", "v_freq2", "v_amp", "v_age",
-		"v_decay", "v_vel", "v_filter", "v_fbias", "v_mod", "v_spitch",
-		"v_spos", "v_sinc", "v_gain"
-	]:
-		var a := PackedFloat32Array()
-		a.resize(VOICES)
-		set(arr_name, a)
+	v_phase = _f32()
+	v_phase2 = _f32()
+	v_freq = _f32()
+	v_freq2 = _f32()
+	v_amp = _f32()
+	v_age = _f32()
+	v_decay = _f32()
+	v_vel = _f32()
+	v_filter = _f32()
+	v_fbias = _f32()
+	v_mod = _f32()
+	v_spitch = _f32()
+	v_spos = _f32()
+	v_sinc = _f32()
+	v_gain = _f32()
 	for i in range(VOICES):
 		v_noise[i] = 1 + i * 9973
 
@@ -112,8 +115,7 @@ func get_instrument(id: int) -> Instrument:
 	return instruments[id % MAX_INST]
 
 func bake_procedural_sample(inst_id: int, kind: String = "kick") -> void:
-	var inst: Instrument = get_instrument(inst_id)
-	inst.load_sample_mono(Dsp.bake_oneshot(kind, 0.22), Dsp.SR)
+	get_instrument(inst_id).load_sample_mono(Dsp.bake_oneshot(kind, 0.22), Dsp.SR)
 
 func stop_all() -> void:
 	for i in range(VOICES):
@@ -224,7 +226,9 @@ func _render(n: int) -> void:
 	var inv := Dsp.INV_SR
 	var use_delay: bool = bus_delay_wet > 0.01 and delay_n > 1
 	var use_dist: bool = bus_dist > 0.01
-	var d_samp: int = clampi(int(bus_delay_time * Dsp.SR), 1, maxi(1, delay_n - 1)) if use_delay else 1
+	var d_samp: int = 1
+	if use_delay:
+		d_samp = clampi(int(bus_delay_time * Dsp.SR), 1, delay_n - 1)
 
 	for i in range(n):
 		var mix := 0.0
@@ -254,8 +258,7 @@ func _render(n: int) -> void:
 		master_lim = maxf(peak, master_lim * 0.9993)
 		if master_lim > master_ceiling:
 			mix *= master_ceiling / master_lim
-		mix = Dsp.soft_clip(mix)
-		_out[i] = Vector2(mix, mix)
+		_out[i] = Vector2(Dsp.soft_clip(mix), Dsp.soft_clip(mix))
 
 	playback.push_buffer(_out)
 
@@ -332,7 +335,7 @@ func _tick_synth(vi: int, dt: float) -> float:
 		Instrument.Algo.TEXTURE:
 			v_phase[vi] = fmod(v_phase[vi] + v_freq[vi] * dt, 1.0)
 			v_phase2[vi] = fmod(v_phase2[vi] + v_freq2[vi] * dt, 1.0)
-			var m: float = (v_phase[vi] + v_phase2[vi] - 1.0)
+			var m: float = v_phase[vi] + v_phase2[vi] - 1.0
 			var fe2: float = Dsp.exp_env(age, 1.2 / decay)
 			var c2: float = 0.03 + (0.08 + 0.35 * v_fbias[vi]) * fe2
 			v_filter[vi] = Dsp.lpf_step(v_filter[vi], m, c2)
