@@ -1,11 +1,7 @@
 class_name SampleImport
 extends RefCounted
 
-## Sample import for Skullbeat on iPad / Xogot
-## Full guide: docs/IOS_AUDIO.md
-##
-## Primary path: native file dialog (Files / AudioShare File Provider / iCloud)
-## Supported now: PCM WAV (8/16/24/32-bit, mono or stereo->mono mix)
+## WAV / AudioShare import — no DSP, only fills Instrument.pcm
 
 signal import_finished(success: bool, message: String, inst_id: int)
 
@@ -98,8 +94,6 @@ func inject_pcm(pcm: PackedFloat32Array, rate: float, inst_id: int, label: Strin
 		return false
 	var inst = _engine.get_instrument(inst_id)
 	inst.load_sample_mono(pcm, rate)
-	inst.sample_enabled = true
-	inst.synth_enabled = true
 	if label != "":
 		inst.name = label.substr(0, mini(12, label.length()))
 	last_meta = {
@@ -110,14 +104,11 @@ func inject_pcm(pcm: PackedFloat32Array, rate: float, inst_id: int, label: Strin
 	}
 	return true
 
-## Parse RIFF/WAVE -> mono float PCM
 static func parse_wav(bytes: PackedByteArray) -> Dictionary:
 	if bytes.size() < 44:
 		return {}
-	# "RIFF"
 	if bytes[0] != 0x52 or bytes[1] != 0x49 or bytes[2] != 0x46 or bytes[3] != 0x46:
 		return {}
-	# "WAVE"
 	if bytes[8] != 0x57 or bytes[9] != 0x41 or bytes[10] != 0x56 or bytes[11] != 0x45:
 		return {}
 	var offset := 12
@@ -148,7 +139,6 @@ static func parse_wav(bytes: PackedByteArray) -> Dictionary:
 			data_size = chunk_size
 			break
 		offset += chunk_size
-		# pad byte for odd chunk sizes
 		if chunk_size % 2 == 1:
 			offset += 1
 	if data_off < 0 or data_size <= 0:
@@ -158,7 +148,7 @@ static func parse_wav(bytes: PackedByteArray) -> Dictionary:
 	var i = data_off
 	var ch_count = maxi(channels, 1)
 	if bits == 16:
-		var frames = (end - data_off) / (2 * ch_count)
+		var frames = int(float(end - data_off) / float(2 * ch_count))
 		pcm.resize(frames)
 		for n in range(frames):
 			var acc := 0.0
@@ -172,7 +162,7 @@ static func parse_wav(bytes: PackedByteArray) -> Dictionary:
 				i += 2
 			pcm[n] = acc / float(ch_count)
 	elif bits == 8:
-		var frames8 = (end - data_off) / ch_count
+		var frames8 = int(float(end - data_off) / float(ch_count))
 		pcm.resize(frames8)
 		for n in range(frames8):
 			var acc8 := 0.0
@@ -181,7 +171,7 @@ static func parse_wav(bytes: PackedByteArray) -> Dictionary:
 				i += 1
 			pcm[n] = acc8 / float(ch_count)
 	elif bits == 24:
-		var frames24 = (end - data_off) / (3 * ch_count)
+		var frames24 = int(float(end - data_off) / float(3 * ch_count))
 		pcm.resize(frames24)
 		for n in range(frames24):
 			var acc24 := 0.0
@@ -196,7 +186,7 @@ static func parse_wav(bytes: PackedByteArray) -> Dictionary:
 				i += 3
 			pcm[n] = acc24 / float(ch_count)
 	elif bits == 32:
-		var frames32 = (end - data_off) / (4 * ch_count)
+		var frames32 = int(float(end - data_off) / float(4 * ch_count))
 		pcm.resize(frames32)
 		for n in range(frames32):
 			var acc32 := 0.0
