@@ -1,52 +1,41 @@
 # ☦ SKULLBEAT
 
-**K-OS III aligned drum machine + step sequencer + scene launcher**
-
-Built for **Xogot** (Godot on iPad).
-
-Pixel aesthetic. No rounded corners. Sharp borders. Dense tracker-inspired UI matching Datamoshpit / KoolDraw / Skullmash.
+**K-OS III aligned 4-channel tracker + tables for Xogot / iPad**
 
 ```
 ╔══════════════════════════════════════════════════════════════╗
-║  SKULLBEAT · STEP SEQUENCER + SCENE LAUNCHER · K-OS III     ║
-║  Touch-first · 8 tracks × 16 steps · Scenes · Live pads     ║
+║  SKULLBEAT · 4CH TRACKER + TABLES · K-OS III               ║
+║  note | oct | inst | fx1 | fx2   ·  per-channel Tables     ║
+║  console font · dynamic layout · REC + drag-to-edit         ║
 ╚══════════════════════════════════════════════════════════════╝
 ```
 
-## Status
+Inspired by ProTracker / Polyend Tracker / Vividtracker layout + LittleGPTracker / LSDJ style Tables (subroutine automation).
 
-Early scaffold. Core sequencer + UI in progress.
+## Current State
 
-## Features (target)
+- **4 channels** side-by-side
+- Each step: **NOTE · OCTAVE · INSTRUMENT · FX1 · FX2**
+- Tap channel header to switch that channel between **PHRASE** view and **TABLE** view
+- Tables are the subroutine/automation layer (HOP-style loops, commands — scaffold ready)
+- **REC** toggle: when on, tap a cell then drag up/down to edit values (note cycle, octave, instrument number)
+- Console-style fixed-width feel, dense, no rounded corners, yellow active / red playhead / REC indicator
+- Layout recalculates visible rows to fill available screen height on iPad
 
-- 8 drum tracks × 16 steps
-- Pattern storage + Scene launcher (Ableton-style clip/scene triggers)
-- Live drum pads
-- Tempo / swing (later)
-- Sample loading (WAV)
-- Export patterns for Datamoshpit / PRODEV pipeline
-- Visual identity locked to K-OS III rules: no rounded corners, black bg, yellow accents, monospace/pixel labels, ☦ headers
+## How to pull into Xogot
 
-## How to run in Xogot
+1. Clone or pull `https://github.com/Koolskull/skullbeat`
+2. Open in Xogot
+3. Run main scene
 
-1. Install [Working Copy](https://workingcopy.app) on iPad (or use any Git client that works with Xogot).
-2. Clone `https://github.com/Koolskull/skullbeat.git`
-3. Open the project folder in Xogot (via Files / iCloud / Working Copy).
-4. Open `project.godot` or the main scene and run.
+## Next priorities
 
-Alternatively: create a new Godot project in Xogot and copy-paste the files from this repo.
+- Actual audio engine (samples or simple synth voices per instrument)
+- Proper hex / command entry for FX columns and full Table editing
+- Phrase length / pattern chaining / Song view
+- Table execution engine (VOLM, HOP, transpose, etc. like LGPT)
+- Sample browser that matches the aesthetic
 
-## Aesthetic Rules (from K-OS III)
+## Aesthetic
 
-- No rounded corners
-- Sharp 1px borders
-- Black / near-black backgrounds (`#000`, `#0a0a0a`, `#1a1a1a`)
-- Yellow (`#ffff00`) for primary active/highlight
-- Gray text (`#555` inactive, `#aaa`/`#fff` active)
-- Dense, small labels, letter-spacing
-- Orthodox cross headers where appropriate
-- Window/title style matching AppWindow.tsx
-
-## License
-
-Koolskull / K-OS-III ecosystem.
+Locked to K-OS III: pure black, sharp 1px borders, yellow accents, console labels, ☦ headers, no rounded anything.
