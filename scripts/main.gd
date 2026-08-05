@@ -242,6 +242,7 @@ func _show_scene(name: String) -> void:
 			if mixer_host:
 				mixer_host.visible = true
 			_refresh_mixer()
+			call_deferred("_refresh_mixer")
 		"settings":
 			if settings_host:
 				settings_host.visible = true
@@ -1374,49 +1375,31 @@ func _build_mixer_view() -> void:
 	tip.add_theme_font_size_override("font_size", 10)
 	v.add_child(tip)
 
+func _mix_track_h(ch: int) -> float:
+	if ch >= 0 and ch < mix_ch_bars.size():
+		return maxf(mix_ch_bars[ch]["track"].size.y, 1.0)
+	if ch == -2 and mix_master_bar:
+		return maxf(mix_master_bar.get_parent().size.y, 1.0)
+	return 160.0
+
+func _apply_mix_y(ch: int, y: float) -> void:
+	var level = clampf(1.0 - (y / _mix_track_h(ch)), 0.0, 1.0) * 1.5
+	if ch == -2:
+		live.set_master_level(level)
+	else:
+		live.set_ch_level(ch, level)
+	_refresh_mixer()
+
 func _on_mix_fader(ev: InputEvent, ch: int) -> void:
 	# ch 0..3 channel, -2 master
 	if ev is InputEventMouseButton and ev.button_index == MOUSE_BUTTON_LEFT:
 		if ev.pressed:
 			mix_drag_ch = ch
-			mix_drag_start_y = ev.position.y
-			if ch == -2:
-				mix_drag_start_val = live.master_level
-			else:
-				mix_drag_start_val = live.get_ch_level(ch)
-			# also absolute set from click position
-			_set_mix_from_y(ch, ev.position.y, ev.control.get_parent().size.y if false else 0.0)
-			# use track size
-			var track: Control = ev as Control
+			_apply_mix_y(ch, ev.position.y)
 		else:
 			mix_drag_ch = -1
-	if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
-		var track_h := 160.0
-		if mix_drag_ch >= 0 and mix_drag_ch < mix_ch_bars.size():
-			track_h = maxf(mix_ch_bars[mix_drag_ch]["track"].size.y, 1.0)
-		elif mix_drag_ch == -2 and mix_master_bar:
-			track_h = maxf(mix_master_bar.get_parent().size.y, 1.0)
-		var level = clampf(1.0 - (ev.position.y / track_h), 0.0, 1.0) * 1.5
-		if ch == -2:
-			live.set_master_level(level)
-		else:
-			live.set_ch_level(ch, level)
-		_refresh_mixer()
 	elif ev is InputEventMouseMotion and mix_drag_ch == ch and (ev.button_mask & MOUSE_BUTTON_MASK_LEFT):
-		var track_h := 160.0
-		if ch >= 0 and ch < mix_ch_bars.size():
-			track_h = maxf(mix_ch_bars[ch]["track"].size.y, 1.0)
-		elif ch == -2 and mix_master_bar:
-			track_h = maxf(mix_master_bar.get_parent().size.y, 1.0)
-		var level = clampf(1.0 - (ev.position.y / track_h), 0.0, 1.0) * 1.5
-		if ch == -2:
-			live.set_master_level(level)
-		else:
-			live.set_ch_level(ch, level)
-		_refresh_mixer()
-
-func _set_mix_from_y(ch: int, y: float, h: float) -> void:
-	pass
+		_apply_mix_y(ch, ev.position.y)
 
 func _refresh_mixer() -> void:
 	if mix_ch_labels.is_empty():
