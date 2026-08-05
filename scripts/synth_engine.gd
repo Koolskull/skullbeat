@@ -34,6 +34,7 @@ var v_spitch: PackedFloat32Array
 var v_spos: PackedFloat32Array
 var v_sinc: PackedFloat32Array
 var v_gain: PackedFloat32Array
+var v_ch: PackedInt32Array
 var v_spos0: PackedFloat32Array  # sample start for retrig
 
 var master_gain := 0.85
@@ -110,6 +111,8 @@ func _alloc_voices() -> void:
 	v_spos = _f32()
 	v_sinc = _f32()
 	v_gain = _f32()
+	v_ch = PackedInt32Array()
+	v_ch.resize(VOICES)
 	v_spos0 = _f32()
 	for i in range(VOICES):
 		v_noise[i] = 1 + i * 9973
@@ -149,6 +152,7 @@ func note_on(note: int, octave: int, instrument: int, fx1: String = "----", fx2:
 
 	var use_samp: bool = inst.use_sample_source()
 	v_on[vi] = 1
+	v_ch[vi] = channel
 	v_inst[vi] = instrument % MAX_INST
 	v_algo[vi] = inst.algo
 	v_src[vi] = 1 if use_samp else 0
@@ -248,6 +252,8 @@ func _apply_live_bus() -> void:
 	bus_dist = live.xy_a.y * 0.85 if live.xy_a.y > 0.05 else 0.0
 	if live.glitch_on:
 		bus_dist = maxf(bus_dist, live.glitch_amt * 0.9)
+	# base master scaled by mixer master fader
+	master_gain = 0.85 * live.master_level
 
 func _render(n: int) -> void:
 	if n <= 0:
@@ -295,7 +301,12 @@ func _render(n: int) -> void:
 				s = _tick_sample(vi)
 			else:
 				s = _tick_synth(vi, inv)
-			mix += s * v_gain[vi]
+			var lg := v_gain[vi]
+			if live and v_ch[vi] >= 0:
+				lg *= live.level_for_channel(v_ch[vi])
+			elif live:
+				lg *= live.master_level
+			mix += s * lg
 
 		if do_glitch:
 			_glitch_ctr += 1
