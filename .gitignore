@@ -1,0 +1,13 @@
+# Godot 4+
+.godot/
+*.translation
+export.cfg
+export_presets.cfg
+.import/
+*.import
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*~
