@@ -1,7 +1,7 @@
 extends Control
 
 ## SKULLBEAT UI shell — multi-window host
-## Scene map (top-left): PHR LCH SET / TBL PRJ EXP
+## Scene map: PHR LCH INS MIX / TBL PRJ SET EXP
 ## Shift+arrows navigate map · tap map cells · SPACE transport
 
 const CHANNELS := 4
@@ -87,6 +87,26 @@ var export_host: Control
 var name_edit: LineEdit
 var bpm_edit_label: Label
 var project_list: VBoxContainer
+
+# instrument editor
+var inst_host: Control
+var edit_inst_id: int = 1
+var inst_id_label: Label
+var inst_algo_label: Label
+var inst_src_label: Label
+var inst_gain_label: Label
+var inst_name_label: Label
+var inst_fx_labels: Array = []
+
+# mixer
+var mixer_host: Control
+var mix_ch_labels: Array = []
+var mix_ch_bars: Array = []
+var mix_master_label: Label
+var mix_master_bar: ColorRect
+var mix_drag_ch: int = -1  # -1 none, -2 master, 0..3 ch
+var mix_drag_start_y: float = 0.0
+var mix_drag_start_val: float = 0.0
 
 func _ready() -> void:
 	live = LiveFx.new()
@@ -192,7 +212,7 @@ func _on_clock_step(step: int) -> void:
 
 func _show_scene(name: String) -> void:
 	current_scene = name
-	for h in [phrase_host, launch_host, settings_host, project_host, export_host]:
+	for h in [phrase_host, launch_host, settings_host, project_host, export_host, inst_host, mixer_host]:
 		if h:
 			h.visible = false
 	match name:
@@ -210,6 +230,18 @@ func _show_scene(name: String) -> void:
 			if launch_host:
 				launch_host.visible = true
 			_refresh_launch()
+		"inst":
+			if inst_host:
+				inst_host.visible = true
+			# default edit inst under cursor if any
+			var d = phrases[selected_ch][selected_step]
+			if d.note >= 0 and d.inst > 0:
+				edit_inst_id = d.inst
+			_refresh_inst()
+		"mixer":
+			if mixer_host:
+				mixer_host.visible = true
+			_refresh_mixer()
 		"settings":
 			if settings_host:
 				settings_host.visible = true
@@ -247,7 +279,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 
-	if KOALA_PADS.has(key) and not shift and not event.ctrl_pressed and not event.meta_pressed:
+	if KOALA_PADS.has(key) and not shift:
 		_on_pad(KOALA_PADS[key])
 		get_viewport().set_input_as_handled()
 		return
@@ -317,6 +349,20 @@ func _unhandled_input(event: InputEvent) -> void:
 					selected_col = 0
 				_refresh_all()
 			get_viewport().set_input_as_handled()
+		KEY_BRACKETLEFT:
+			if current_scene == "inst":
+				edit_inst_id = maxi(0, edit_inst_id - 1)
+				_refresh_inst()
+			get_viewport().set_input_as_handled()
+		KEY_BRACKETRIGHT:
+			if current_scene == "inst":
+				edit_inst_id = mini(63, edit_inst_id + 1)
+				_refresh_inst()
+			get_viewport().set_input_as_handled()
+		KEY_P:
+			if current_scene == "inst":
+				_preview_inst()
+				get_viewport().set_input_as_handled()
 		KEY_BACKSPACE, KEY_DELETE:
 			if current_scene == "phrase" and channel_view_mode[selected_ch] == 0:
 				phrases[selected_ch][selected_step] = _empty_step()
@@ -522,12 +568,14 @@ func _build_ui() -> void:
 
 	_build_phrase_view()
 	_build_launch_view()
+	_build_inst_view()
+	_build_mixer_view()
 	_build_settings_view()
 	_build_project_view()
 	_build_export_view()
 
 	status_label = Label.new()
-	status_label.text = "Shift+arrows = scene map · LCH = clips+FX · PRJ save"
+	status_label.text = "Shift+arrows map · INS instrument · MIX levels · LCH live"
 	status_label.add_theme_color_override("font_color", COL_TEXT_DIM)
 	status_label.add_theme_font_size_override("font_size", 10)
 	root.add_child(status_label)
@@ -656,8 +704,8 @@ func _build_launch_view() -> void:
 
 	xy_a_panel = _make_xy_pad("XY A  X=filter  Y=drive", true)
 	xy_b_panel = _make_xy_pad("XY B  X=delay  Y=time", false)
-	xy_row.add_child(xy_a_panel.get_meta("wrap"))
-	xy_row.add_child(xy_b_panel.get_meta("wrap"))
+	xy_row.add_child(xy_a_panel.get_parent())
+	xy_row.add_child(xy_b_panel.get_parent())
 
 func _make_xy_pad(label: String, is_a: bool) -> ColorRect:
 	var wrap := VBoxContainer.new()
@@ -863,12 +911,26 @@ func _refresh_project_list() -> void:
 		row.add_child(b)
 		project_list.add_child(row)
 
+# Fix XY pad parenting — rebuild launch xy section cleanly on first show
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_READY:
+		pass
+
 func _recalc_layout() -> void:
 	var h: float = size.y - 90.0
 	if h < 100.0: h = 400.0
 	visible_rows = clampi(int(h / 18.0), 8, STEPS)
-	if not channel_containers.is_empty():
+	if phrase_host and phrase_host.visible:
 		_rebuild_rows()
+	# fix xy pads: ensure wraps are in tree
+	_ensure_xy_parents()
+
+func _ensure_xy_parents() -> void:
+	if xy_a_panel and xy_a_panel.has_meta("wrap"):
+		var w: Control = xy_a_panel.get_meta("wrap")
+		if w.get_parent() == null and launch_host:
+			# already handled in build
+			pass
 
 func _rebuild_rows() -> void:
 	if channel_containers.is_empty():
@@ -999,6 +1061,386 @@ func _apply_drag(ch: int, step: int, col: int, val: int) -> void:
 			if col == 3: d.fx1 = presets[idx]
 			else: d.fx2 = presets[idx]
 	phrases[ch][step] = d
+
+
+func _build_inst_view() -> void:
+	inst_host = _host()
+	var v := VBoxContainer.new()
+	v.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	v.add_theme_constant_override("separation", 6)
+	inst_host.add_child(v)
+
+	var h := Label.new()
+	h.text = "INSTRUMENT EDITOR"
+	h.add_theme_color_override("font_color", COL_ACTIVE)
+	v.add_child(h)
+
+	var nav := HBoxContainer.new()
+	nav.add_theme_constant_override("separation", 6)
+	v.add_child(nav)
+	var prevb := _btn("<")
+	prevb.pressed.connect(func():
+		edit_inst_id = maxi(0, edit_inst_id - 1)
+		_refresh_inst()
+	)
+	nav.add_child(prevb)
+	inst_id_label = Label.new()
+	inst_id_label.text = "INST 01"
+	inst_id_label.add_theme_color_override("font_color", COL_ACTIVE)
+	inst_id_label.add_theme_font_size_override("font_size", 16)
+	inst_id_label.custom_minimum_size.x = 100
+	nav.add_child(inst_id_label)
+	var nextb := _btn(">")
+	nextb.pressed.connect(func():
+		edit_inst_id = mini(63, edit_inst_id + 1)
+		_refresh_inst()
+	)
+	nav.add_child(nextb)
+	var prevw := _btn("PREV")
+	prevw.pressed.connect(_preview_inst)
+	nav.add_child(prevw)
+	var impb := _btn("IMP")
+	impb.pressed.connect(func():
+		sample_import.set_target_instrument(edit_inst_id)
+		sample_import.open_file_picker()
+	)
+	nav.add_child(impb)
+
+	inst_name_label = Label.new()
+	inst_name_label.add_theme_color_override("font_color", COL_TEXT)
+	v.add_child(inst_name_label)
+
+	# source row
+	var src_row := HBoxContainer.new()
+	src_row.add_theme_constant_override("separation", 6)
+	v.add_child(src_row)
+	inst_src_label = Label.new()
+	inst_src_label.add_theme_color_override("font_color", COL_TEXT)
+	inst_src_label.custom_minimum_size.x = 160
+	src_row.add_child(inst_src_label)
+	var syn_b := _btn("SYNTH")
+	syn_b.pressed.connect(func():
+		var inst = synth.get_instrument(edit_inst_id)
+		inst.synth_on = true
+		if inst.has_sample():
+			inst.sample_on = false
+		_refresh_inst()
+		_preview_inst()
+	)
+	src_row.add_child(syn_b)
+	var sam_b := _btn("SAMP")
+	sam_b.pressed.connect(func():
+		var inst = synth.get_instrument(edit_inst_id)
+		if inst.pcm.size() > 16:
+			inst.sample_on = true
+			inst.synth_on = false
+		_refresh_inst()
+		_preview_inst()
+	)
+	src_row.add_child(sam_b)
+
+	# algo
+	var algo_row := HBoxContainer.new()
+	algo_row.add_theme_constant_override("separation", 6)
+	v.add_child(algo_row)
+	inst_algo_label = Label.new()
+	inst_algo_label.add_theme_color_override("font_color", COL_TEXT)
+	inst_algo_label.custom_minimum_size.x = 160
+	algo_row.add_child(inst_algo_label)
+	var al := _btn("ALGO-")
+	al.pressed.connect(func(): _nudge_algo(-1))
+	algo_row.add_child(al)
+	var ar := _btn("ALGO+")
+	ar.pressed.connect(func(): _nudge_algo(1))
+	algo_row.add_child(ar)
+
+	# gain
+	var gain_row := HBoxContainer.new()
+	gain_row.add_theme_constant_override("separation", 6)
+	v.add_child(gain_row)
+	inst_gain_label = Label.new()
+	inst_gain_label.add_theme_color_override("font_color", COL_TEXT)
+	inst_gain_label.custom_minimum_size.x = 160
+	gain_row.add_child(inst_gain_label)
+	var gd := _btn("GAIN-")
+	gd.pressed.connect(func():
+		var inst = synth.get_instrument(edit_inst_id)
+		inst.gain = clampf(inst.gain - 0.1, 0.0, 1.5)
+		_refresh_inst()
+	)
+	gain_row.add_child(gd)
+	var gu := _btn("GAIN+")
+	gu.pressed.connect(func():
+		var inst = synth.get_instrument(edit_inst_id)
+		inst.gain = clampf(inst.gain + 0.1, 0.0, 1.5)
+		_refresh_inst()
+	)
+	gain_row.add_child(gu)
+
+	# FX slots
+	var fxh := Label.new()
+	fxh.text = "FX RACK (type cycle · wet ±)"
+	fxh.add_theme_color_override("font_color", COL_TEXT_DIM)
+	v.add_child(fxh)
+	inst_fx_labels.clear()
+	for slot in range(3):
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 4)
+		v.add_child(row)
+		var lab := Label.new()
+		lab.add_theme_color_override("font_color", COL_TEXT)
+		lab.custom_minimum_size.x = 200
+		row.add_child(lab)
+		inst_fx_labels.append(lab)
+		var si = slot
+		var tb := _btn("TYPE")
+		tb.pressed.connect(func(): _cycle_fx_type(si))
+		row.add_child(tb)
+		var wd := _btn("W-")
+		wd.pressed.connect(func():
+			var inst = synth.get_instrument(edit_inst_id)
+			inst.fx_wet[si] = clampf(float(inst.fx_wet[si]) - 0.1, 0.0, 1.0)
+			_refresh_inst()
+		)
+		row.add_child(wd)
+		var wu := _btn("W+")
+		wu.pressed.connect(func():
+			var inst = synth.get_instrument(edit_inst_id)
+			inst.fx_wet[si] = clampf(float(inst.fx_wet[si]) + 0.1, 0.0, 1.0)
+			_refresh_inst()
+		)
+		row.add_child(wu)
+
+	var tip := Label.new()
+	tip.text = "[ ] select inst · P preview · IMP load sample · REC drag in PHR for FX cmds"
+	tip.add_theme_color_override("font_color", COL_TEXT_DIM)
+	tip.add_theme_font_size_override("font_size", 10)
+	v.add_child(tip)
+
+func _nudge_algo(d: int) -> void:
+	var inst = synth.get_instrument(edit_inst_id)
+	var a = int(inst.algo) + d
+	if a < 0:
+		a = int(Instrument.Algo.NOISE)
+	if a > int(Instrument.Algo.NOISE):
+		a = 0
+	inst.algo = a
+	inst.synth_on = true
+	if inst.has_sample() and a != int(Instrument.Algo.NONE):
+		# keep sample available but force synth path for editing
+		inst.sample_on = false
+	_refresh_inst()
+	_preview_inst()
+
+func _cycle_fx_type(slot: int) -> void:
+	var inst = synth.get_instrument(edit_inst_id)
+	var t = int(inst.fx_type[slot]) + 1
+	if t > int(Instrument.Fx.REVERB):
+		t = 0
+	inst.fx_type[slot] = t
+	if t != int(Instrument.Fx.OFF) and float(inst.fx_wet[slot]) < 0.05:
+		inst.fx_wet[slot] = 0.3
+	_refresh_inst()
+
+func _preview_inst() -> void:
+	synth.note_on(0, 4, edit_inst_id, "V90", "----", 1.0, -1)
+	if status_label:
+		status_label.text = "PREVIEW INST %02X" % edit_inst_id
+
+func _algo_name(a: int) -> String:
+	match a:
+		Instrument.Algo.NONE: return "NONE"
+		Instrument.Algo.KICK: return "KICK"
+		Instrument.Algo.SNARE: return "SNARE"
+		Instrument.Algo.HAT: return "HAT"
+		Instrument.Algo.CLAP: return "CLAP"
+		Instrument.Algo.BASS: return "BASS"
+		Instrument.Algo.TEXTURE: return "TEXTURE"
+		Instrument.Algo.FM: return "FM"
+		Instrument.Algo.NOISE: return "NOISE"
+	return "?"
+
+func _fx_name(t: int) -> String:
+	match t:
+		Instrument.Fx.OFF: return "OFF"
+		Instrument.Fx.DIST: return "DIST"
+		Instrument.Fx.CHORUS: return "CHORUS"
+		Instrument.Fx.DELAY: return "DELAY"
+		Instrument.Fx.REVERB: return "REVERB"
+	return "?"
+
+func _refresh_inst() -> void:
+	if inst_id_label == null:
+		return
+	var inst = synth.get_instrument(edit_inst_id)
+	inst_id_label.text = "INST %02X" % edit_inst_id
+	inst_name_label.text = "NAME  %s" % inst.name
+	var src := "SRC  "
+	if inst.use_sample_source():
+		src += "SAMPLE  %d frames" % inst.pcm.size()
+	elif inst.use_synth_source():
+		src += "SYNTH"
+	else:
+		src += "—"
+	inst_src_label.text = src
+	inst_algo_label.text = "ALGO  %s" % _algo_name(int(inst.algo))
+	inst_gain_label.text = "GAIN  %.2f" % inst.gain
+	for s in range(mini(3, inst_fx_labels.size())):
+		inst_fx_labels[s].text = "FX%d  %s  wet %.2f" % [s + 1, _fx_name(int(inst.fx_type[s])), float(inst.fx_wet[s])]
+
+func _build_mixer_view() -> void:
+	mixer_host = _host()
+	var v := VBoxContainer.new()
+	v.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	v.add_theme_constant_override("separation", 8)
+	mixer_host.add_child(v)
+
+	var h := Label.new()
+	h.text = "MIXER  tap/drag faders · levels 0–150%"
+	h.add_theme_color_override("font_color", COL_ACTIVE)
+	v.add_child(h)
+
+	var row := HBoxContainer.new()
+	row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	row.add_theme_constant_override("separation", 12)
+	v.add_child(row)
+
+	mix_ch_labels.clear()
+	mix_ch_bars.clear()
+	for ch in range(CHANNELS):
+		var col := VBoxContainer.new()
+		col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		col.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		col.add_theme_constant_override("separation", 4)
+		row.add_child(col)
+		var lab := Label.new()
+		lab.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		lab.add_theme_color_override("font_color", COL_TEXT)
+		lab.add_theme_font_size_override("font_size", 12)
+		col.add_child(lab)
+		mix_ch_labels.append(lab)
+		var track := ColorRect.new()
+		track.color = Color("#111111")
+		track.custom_minimum_size = Vector2(48, 160)
+		track.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		track.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		track.mouse_filter = Control.MOUSE_FILTER_STOP
+		col.add_child(track)
+		var fill := ColorRect.new()
+		fill.color = COL_ACTIVE
+		fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		track.add_child(fill)
+		mix_ch_bars.append({"track": track, "fill": fill})
+		var ci = ch
+		track.gui_input.connect(func(ev: InputEvent): _on_mix_fader(ev, ci))
+		var mute := _btn("M")
+		mute.pressed.connect(func():
+			live.toggle_mute(ci)
+			_refresh_mixer()
+		)
+		col.add_child(mute)
+
+	# master
+	var mcol := VBoxContainer.new()
+	mcol.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	mcol.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	mcol.add_theme_constant_override("separation", 4)
+	row.add_child(mcol)
+	mix_master_label = Label.new()
+	mix_master_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	mix_master_label.add_theme_color_override("font_color", COL_ACTIVE)
+	mcol.add_child(mix_master_label)
+	var mtrack := ColorRect.new()
+	mtrack.color = Color("#111111")
+	mtrack.custom_minimum_size = Vector2(48, 160)
+	mtrack.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	mtrack.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	mtrack.mouse_filter = Control.MOUSE_FILTER_STOP
+	mcol.add_child(mtrack)
+	mix_master_bar = ColorRect.new()
+	mix_master_bar.color = COL_REC
+	mix_master_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	mtrack.add_child(mix_master_bar)
+	mtrack.gui_input.connect(func(ev: InputEvent): _on_mix_fader(ev, -2))
+	var mtag := Label.new()
+	mtag.text = "MST"
+	mtag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	mtag.add_theme_color_override("font_color", COL_TEXT_DIM)
+	mcol.add_child(mtag)
+
+	var tip := Label.new()
+	tip.text = "Mute on LCH or here · levels also scale live pads via master"
+	tip.add_theme_color_override("font_color", COL_TEXT_DIM)
+	tip.add_theme_font_size_override("font_size", 10)
+	v.add_child(tip)
+
+func _on_mix_fader(ev: InputEvent, ch: int) -> void:
+	# ch 0..3 channel, -2 master
+	if ev is InputEventMouseButton and ev.button_index == MOUSE_BUTTON_LEFT:
+		if ev.pressed:
+			mix_drag_ch = ch
+			mix_drag_start_y = ev.position.y
+			if ch == -2:
+				mix_drag_start_val = live.master_level
+			else:
+				mix_drag_start_val = live.get_ch_level(ch)
+			# also absolute set from click position
+			_set_mix_from_y(ch, ev.position.y, ev.control.get_parent().size.y if false else 0.0)
+			# use track size
+			var track: Control = ev as Control
+		else:
+			mix_drag_ch = -1
+	if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
+		var track_h := 160.0
+		if mix_drag_ch >= 0 and mix_drag_ch < mix_ch_bars.size():
+			track_h = maxf(mix_ch_bars[mix_drag_ch]["track"].size.y, 1.0)
+		elif mix_drag_ch == -2 and mix_master_bar:
+			track_h = maxf(mix_master_bar.get_parent().size.y, 1.0)
+		var level = clampf(1.0 - (ev.position.y / track_h), 0.0, 1.0) * 1.5
+		if ch == -2:
+			live.set_master_level(level)
+		else:
+			live.set_ch_level(ch, level)
+		_refresh_mixer()
+	elif ev is InputEventMouseMotion and mix_drag_ch == ch and (ev.button_mask & MOUSE_BUTTON_MASK_LEFT):
+		var track_h := 160.0
+		if ch >= 0 and ch < mix_ch_bars.size():
+			track_h = maxf(mix_ch_bars[ch]["track"].size.y, 1.0)
+		elif ch == -2 and mix_master_bar:
+			track_h = maxf(mix_master_bar.get_parent().size.y, 1.0)
+		var level = clampf(1.0 - (ev.position.y / track_h), 0.0, 1.0) * 1.5
+		if ch == -2:
+			live.set_master_level(level)
+		else:
+			live.set_ch_level(ch, level)
+		_refresh_mixer()
+
+func _set_mix_from_y(ch: int, y: float, h: float) -> void:
+	pass
+
+func _refresh_mixer() -> void:
+	if mix_ch_labels.is_empty():
+		return
+	for ch in range(CHANNELS):
+		var lv = live.get_ch_level(ch)
+		var muted = live.is_muted(ch)
+		mix_ch_labels[ch].text = "CH%d\n%3d%%%s" % [ch + 1, int(lv * 100.0), " M" if muted else ""]
+		var track: ColorRect = mix_ch_bars[ch]["track"]
+		var fill: ColorRect = mix_ch_bars[ch]["fill"]
+		var th = maxf(track.size.y, 160.0)
+		var fh = th * clampf(lv / 1.5, 0.0, 1.0)
+		fill.size = Vector2(maxf(track.size.x, 48.0), fh)
+		fill.position = Vector2(0, th - fh)
+		fill.color = COL_TEXT_DIM if muted else COL_ACTIVE
+	if mix_master_label:
+		mix_master_label.text = "MST\n%3d%%" % int(live.master_level * 100.0)
+	if mix_master_bar:
+		var track2: Control = mix_master_bar.get_parent()
+		var th2 = maxf(track2.size.y, 160.0)
+		var fh2 = th2 * clampf(live.master_level / 1.5, 0.0, 1.0)
+		mix_master_bar.size = Vector2(maxf(track2.size.x, 48.0), fh2)
+		mix_master_bar.position = Vector2(0, th2 - fh2)
+
 
 func _btn(txt: String) -> Button:
 	var b := Button.new()
