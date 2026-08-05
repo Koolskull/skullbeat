@@ -1,10 +1,8 @@
 extends Control
 
-## ☦ SKULLBEAT — Tracker Mode + Integrated Synth
-## 4 channels · note | octave | instrument | fx1 | fx2
-## Percussion + harmonic textures via SynthEngine
-## Koala-style keyboard → MPC pads
-## K-OS III aesthetic
+## ☦ SKULLBEAT — Tracker + Synth + FX-driven parameters
+## FX1 / FX2 columns control the synth:
+##   Vxx volume   Dxx decay   Fxx filter   Mxx mod/FM   Pxx pitch   Sxx start-pitch
 
 const CHANNELS := 4
 const STEPS := 16
@@ -54,7 +52,6 @@ var status_label: Label
 var rec_btn: Button
 var play_btn: Button
 var bpm_label: Label
-
 var synth: SynthEngine
 
 func _ready() -> void:
@@ -76,25 +73,32 @@ func _init_data() -> void:
 			table.append({"cmd1": "----", "val1": "00", "cmd2": "----", "val2": "00"})
 		tables.append(table)
 		channel_view_mode.append(0)
-	# Seed: kick on 1, snare on 2, hats on 3, bass texture on 4
-	phrases[0][0]  = {"note": 0, "oct": 2, "inst": 1,  "fx1": "----", "fx2": "----"}  # kick
-	phrases[0][8]  = {"note": 0, "oct": 2, "inst": 1,  "fx1": "----", "fx2": "----"}
-	phrases[1][4]  = {"note": 0, "oct": 3, "inst": 6,  "fx1": "----", "fx2": "----"}  # snare range
-	phrases[1][12] = {"note": 0, "oct": 3, "inst": 6,  "fx1": "----", "fx2": "----"}
-	phrases[2][0]  = {"note": 0, "oct": 5, "inst": 10, "fx1": "----", "fx2": "----"}  # hat
-	phrases[2][2]  = {"note": 0, "oct": 5, "inst": 10, "fx1": "----", "fx2": "----"}
-	phrases[2][4]  = {"note": 0, "oct": 5, "inst": 10, "fx1": "----", "fx2": "----"}
-	phrases[2][6]  = {"note": 0, "oct": 5, "inst": 10, "fx1": "----", "fx2": "----"}
-	phrases[2][8]  = {"note": 0, "oct": 5, "inst": 10, "fx1": "----", "fx2": "----"}
-	phrases[2][10] = {"note": 0, "oct": 5, "inst": 10, "fx1": "----", "fx2": "----"}
-	phrases[2][12] = {"note": 0, "oct": 5, "inst": 10, "fx1": "----", "fx2": "----"}
-	phrases[2][14] = {"note": 0, "oct": 5, "inst": 10, "fx1": "----", "fx2": "----"}
-	phrases[3][0]  = {"note": 0, "oct": 2, "inst": 16, "fx1": "----", "fx2": "----"}  # bass/texture
-	phrases[3][8]  = {"note": 7, "oct": 2, "inst": 16, "fx1": "----", "fx2": "----"}
+
+	# Seed with real FX so the difference is audible immediately
+	# CH1 kicks — one normal, one longer decay + higher start pitch
+	phrases[0][0]  = {"note": 0, "oct": 2, "inst": 1, "fx1": "V90", "fx2": "D40"}
+	phrases[0][8]  = {"note": 0, "oct": 2, "inst": 1, "fx1": "VA0", "fx2": "D90"}  # longer, louder
+
+	# CH2 snares
+	phrases[1][4]  = {"note": 0, "oct": 3, "inst": 6, "fx1": "V80", "fx2": "D50"}
+	phrases[1][12] = {"note": 0, "oct": 3, "inst": 6, "fx1": "V60", "fx2": "D30"}  # quieter/shorter
+
+	# CH3 hats — varying decay via D
+	phrases[2][0]  = {"note": 0, "oct": 5, "inst": 10, "fx1": "V70", "fx2": "D20"}
+	phrases[2][2]  = {"note": 0, "oct": 5, "inst": 10, "fx1": "V50", "fx2": "D10"}
+	phrases[2][4]  = {"note": 0, "oct": 5, "inst": 10, "fx1": "V70", "fx2": "D20"}
+	phrases[2][6]  = {"note": 0, "oct": 5, "inst": 10, "fx1": "V40", "fx2": "D08"}
+	phrases[2][8]  = {"note": 0, "oct": 5, "inst": 10, "fx1": "V70", "fx2": "D20"}
+	phrases[2][10] = {"note": 0, "oct": 5, "inst": 10, "fx1": "V50", "fx2": "D10"}
+	phrases[2][12] = {"note": 0, "oct": 5, "inst": 10, "fx1": "V70", "fx2": "D20"}
+	phrases[2][14] = {"note": 0, "oct": 5, "inst": 10, "fx1": "V30", "fx2": "D05"}
+
+	# CH4 bass/texture — filter + decay
+	phrases[3][0]  = {"note": 0, "oct": 2, "inst": 16, "fx1": "V88", "fx2": "FA0"}  # open filter
+	phrases[3][8]  = {"note": 7, "oct": 2, "inst": 16, "fx1": "V70", "fx2": "F40"}  # darker
 
 func _process(delta: float) -> void:
-	if not is_playing:
-		return
+	if not is_playing: return
 	var step_dur = 60.0 / bpm / 4.0
 	step_timer += delta
 	if step_timer >= step_dur:
@@ -103,175 +107,127 @@ func _process(delta: float) -> void:
 
 func _advance_step() -> void:
 	current_step = (current_step + 1) % STEPS
-	# Trigger notes on this step across all channels
 	for ch in range(CHANNELS):
 		var d = phrases[ch][current_step]
 		if d.note >= 0:
-			synth.note_on(d.note, d.oct, d.inst, 1.0)
+			synth.note_on(d.note, d.oct, d.inst, d.fx1, d.fx2, 1.0)
 	_refresh_all_channels()
 
 func _unhandled_input(event: InputEvent) -> void:
-	if not (event is InputEventKey and event.pressed and not event.echo):
-		return
+	if not (event is InputEventKey and event.pressed and not event.echo): return
 	var key = event.keycode
-
 	if KOALA_PADS.has(key):
-		var pad_idx: int = KOALA_PADS[key]
-		_on_pad_triggered(pad_idx)
+		_on_pad_triggered(KOALA_PADS[key])
 		get_viewport().set_input_as_handled()
 		return
-
 	match key:
 		KEY_SPACE:
-			if is_playing:
-				_on_stop()
-			else:
-				_toggle_play()
+			if is_playing: _on_stop()
+			else: _toggle_play()
 			get_viewport().set_input_as_handled()
 		KEY_0:
 			_toggle_rec()
 			get_viewport().set_input_as_handled()
 		KEY_EQUAL, KEY_KP_ADD:
-			_change_bpm(1)
-			get_viewport().set_input_as_handled()
+			_change_bpm(1); get_viewport().set_input_as_handled()
 		KEY_MINUS, KEY_KP_SUBTRACT:
-			_change_bpm(-1)
-			get_viewport().set_input_as_handled()
+			_change_bpm(-1); get_viewport().set_input_as_handled()
 		KEY_UP:
 			selected_step = max(0, selected_step - 1)
-			_refresh_all_channels()
-			status_label.text = "STEP %02d" % selected_step
-			get_viewport().set_input_as_handled()
+			_refresh_all_channels(); get_viewport().set_input_as_handled()
 		KEY_DOWN:
 			selected_step = min(STEPS - 1, selected_step + 1)
-			_refresh_all_channels()
-			status_label.text = "STEP %02d" % selected_step
-			get_viewport().set_input_as_handled()
+			_refresh_all_channels(); get_viewport().set_input_as_handled()
 		KEY_LEFT:
-			if selected_col > 0:
-				selected_col -= 1
-			else:
-				selected_ch = max(0, selected_ch - 1)
-				selected_col = 4
-			_refresh_all_channels()
-			get_viewport().set_input_as_handled()
+			if selected_col > 0: selected_col -= 1
+			else: selected_ch = max(0, selected_ch - 1); selected_col = 4
+			_refresh_all_channels(); get_viewport().set_input_as_handled()
 		KEY_RIGHT:
-			if selected_col < 4:
-				selected_col += 1
-			else:
-				selected_ch = min(CHANNELS - 1, selected_ch + 1)
-				selected_col = 0
-			_refresh_all_channels()
-			get_viewport().set_input_as_handled()
+			if selected_col < 4: selected_col += 1
+			else: selected_ch = min(CHANNELS - 1, selected_ch + 1); selected_col = 0
+			_refresh_all_channels(); get_viewport().set_input_as_handled()
 		KEY_BACKSPACE, KEY_DELETE:
 			if channel_view_mode[selected_ch] == 0:
 				phrases[selected_ch][selected_step] = {"note": -1, "oct": 4, "inst": 0, "fx1": "----", "fx2": "----"}
 				_refresh_channel(selected_ch)
-				status_label.text = "CLEARED CH%d STEP%02d" % [selected_ch + 1, selected_step]
 			get_viewport().set_input_as_handled()
 
 func _on_pad_triggered(pad_idx: int) -> void:
 	var inst = pad_idx + 1
 	var note = pad_idx % 12
-	var oct = 2 + int(pad_idx / 8)   # lower pads = lower octaves for kicks/basses
-
-	# Live synthesis
-	synth.note_on(note, oct, inst, 1.0)
+	var oct = 2 + int(pad_idx / 8)
+	# Live pad uses default (no FX) so it stays punchy
+	synth.note_on(note, oct, inst, "----", "----", 1.0)
 	status_label.text = "PAD %02d → INST %02X  %s%d" % [pad_idx + 1, inst, NOTE_NAMES[note], oct]
-
 	if is_recording and channel_view_mode[selected_ch] == 0:
 		phrases[selected_ch][selected_step] = {
-			"note": note,
-			"oct": oct,
-			"inst": inst,
-			"fx1": "----",
-			"fx2": "----"
+			"note": note, "oct": oct, "inst": inst,
+			"fx1": "V80", "fx2": "----"
 		}
 		_refresh_channel(selected_ch)
 		selected_step = (selected_step + 1) % STEPS
 		_refresh_all_channels()
-		status_label.text = "REC PAD%02d → CH%d STEP%02d" % [pad_idx + 1, selected_ch + 1, selected_step]
 
 func _build_ui() -> void:
 	var bg := ColorRect.new()
 	bg.color = COL_BG
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	add_child(bg)
-	move_child(bg, 0)
-	
+	add_child(bg); move_child(bg, 0)
 	var root := VBoxContainer.new()
 	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	root.add_theme_constant_override("separation", 2)
-	root.offset_left = 4
-	root.offset_top = 4
-	root.offset_right = -4
-	root.offset_bottom = -4
+	root.offset_left = 4; root.offset_top = 4; root.offset_right = -4; root.offset_bottom = -4
 	add_child(root)
-	
 	header_bar = HBoxContainer.new()
 	header_bar.add_theme_constant_override("separation", 8)
 	root.add_child(header_bar)
-	
 	var title := Label.new()
 	title.text = "☦ SKULLBEAT"
 	title.add_theme_color_override("font_color", COL_TEXT_BRIGHT)
 	title.add_theme_font_size_override("font_size", 16)
 	header_bar.add_child(title)
-	
 	var mode_lbl := Label.new()
-	mode_lbl.text = "SYNTH · TRACKER · PADS"
+	mode_lbl.text = "FX-DRIVEN SYNTH"
 	mode_lbl.add_theme_color_override("font_color", COL_TEXT_DIM)
 	mode_lbl.add_theme_font_size_override("font_size", 11)
 	header_bar.add_child(mode_lbl)
-	
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header_bar.add_child(spacer)
-	
 	bpm_label = Label.new()
 	bpm_label.text = "BPM %d" % int(bpm)
 	bpm_label.add_theme_color_override("font_color", COL_ACTIVE)
 	bpm_label.add_theme_font_size_override("font_size", 13)
 	header_bar.add_child(bpm_label)
-	
 	var bpm_down := _make_console_btn("-")
 	bpm_down.pressed.connect(func(): _change_bpm(-1))
 	header_bar.add_child(bpm_down)
 	var bpm_up := _make_console_btn("+")
 	bpm_up.pressed.connect(func(): _change_bpm(1))
 	header_bar.add_child(bpm_up)
-	
 	rec_btn = _make_console_btn("REC")
 	rec_btn.pressed.connect(_toggle_rec)
 	header_bar.add_child(rec_btn)
-	
 	play_btn = _make_console_btn("PLAY")
 	play_btn.pressed.connect(_toggle_play)
 	header_bar.add_child(play_btn)
-	
 	var stop_btn := _make_console_btn("STOP")
 	stop_btn.pressed.connect(_on_stop)
 	header_bar.add_child(stop_btn)
-	
 	var channels_row := HBoxContainer.new()
 	channels_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	channels_row.add_theme_constant_override("separation", 3)
 	root.add_child(channels_row)
-	
-	channel_containers.clear()
-	step_labels.clear()
-	
+	channel_containers.clear(); step_labels.clear()
 	for ch in range(CHANNELS):
 		var ch_panel := PanelContainer.new()
 		ch_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		ch_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		_style_panel(ch_panel)
 		channels_row.add_child(ch_panel)
-		
 		var ch_vbox := VBoxContainer.new()
 		ch_vbox.add_theme_constant_override("separation", 0)
 		ch_panel.add_child(ch_vbox)
-		
 		var ch_header := Button.new()
 		ch_header.text = "CH%d  PHRASE" % (ch + 1)
 		ch_header.focus_mode = Control.FOCUS_NONE
@@ -280,7 +236,6 @@ func _build_ui() -> void:
 		var ch_idx = ch
 		ch_header.pressed.connect(func(): _toggle_channel_view(ch_idx))
 		ch_vbox.add_child(ch_header)
-		
 		var col_hdr := HBoxContainer.new()
 		col_hdr.add_theme_constant_override("separation", 0)
 		ch_vbox.add_child(col_hdr)
@@ -292,22 +247,14 @@ func _build_ui() -> void:
 			l.add_theme_color_override("font_color", COL_TEXT_DIM)
 			l.add_theme_font_size_override("font_size", 9)
 			col_hdr.add_child(l)
-		
 		var steps_box := VBoxContainer.new()
 		steps_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		steps_box.add_theme_constant_override("separation", 0)
 		ch_vbox.add_child(steps_box)
-		
-		channel_containers.append({
-			"panel": ch_panel,
-			"header": ch_header,
-			"steps_box": steps_box,
-			"col_hdr": col_hdr
-		})
+		channel_containers.append({"panel": ch_panel, "header": ch_header, "steps_box": steps_box, "col_hdr": col_hdr})
 		step_labels.append([])
-	
 	status_label = Label.new()
-	status_label.text = "SYNTH LIVE  ·  PADS 1-4=KICK  5-8=SNARE  9-C=HAT  D+=TEXTURE/FM  ·  SPACE PLAY  0 REC"
+	status_label.text = "FX: V=vol  D=decay  F=filter  M=mod  P=pitch  S=start-pitch   ·  SPACE PLAY  0 REC"
 	status_label.add_theme_color_override("font_color", COL_TEXT_DIM)
 	status_label.add_theme_font_size_override("font_size", 10)
 	root.add_child(status_label)
@@ -321,8 +268,7 @@ func _recalc_layout() -> void:
 func _rebuild_step_rows() -> void:
 	for ch in range(CHANNELS):
 		var steps_box: VBoxContainer = channel_containers[ch]["steps_box"]
-		for child in steps_box.get_children():
-			child.queue_free()
+		for child in steps_box.get_children(): child.queue_free()
 		step_labels[ch].clear()
 		for s in range(visible_rows):
 			var row := HBoxContainer.new()
@@ -331,8 +277,7 @@ func _rebuild_step_rows() -> void:
 			var bg_rect := ColorRect.new()
 			bg_rect.color = COL_ROW_ALT if s % 4 == 0 else COL_BG
 			bg_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-			row.add_child(bg_rect)
-			row.move_child(bg_rect, 0)
+			row.add_child(bg_rect); row.move_child(bg_rect, 0)
 			var cells: Array = []
 			for col in range(5):
 				var cell := Label.new()
@@ -342,15 +287,13 @@ func _rebuild_step_rows() -> void:
 				cell.add_theme_font_size_override("font_size", 12)
 				cell.mouse_filter = Control.MOUSE_FILTER_STOP
 				cell.gui_input.connect(_on_cell_input.bind(ch, s, col))
-				row.add_child(cell)
-				cells.append(cell)
+				row.add_child(cell); cells.append(cell)
 			steps_box.add_child(row)
 			step_labels[ch].append(cells)
 	_refresh_all_channels()
 
 func _refresh_all_channels() -> void:
-	for ch in range(CHANNELS):
-		_refresh_channel(ch)
+	for ch in range(CHANNELS): _refresh_channel(ch)
 
 func _refresh_channel(ch: int) -> void:
 	var mode = channel_view_mode[ch]
@@ -367,32 +310,24 @@ func _refresh_channel(ch: int) -> void:
 			cells[4].text = data.fx2
 		else:
 			var tdata = tables[ch][s]
-			cells[0].text = tdata.cmd1
-			cells[1].text = tdata.val1
-			cells[2].text = tdata.cmd2
-			cells[3].text = tdata.val2
-			cells[4].text = ""
+			cells[0].text = tdata.cmd1; cells[1].text = tdata.val1
+			cells[2].text = tdata.cmd2; cells[3].text = tdata.val2; cells[4].text = ""
 		for c in range(5):
 			var col_color = COL_TEXT
-			if is_playing and s == current_step and mode == 0:
-				col_color = COL_PLAYHEAD
-			elif ch == selected_ch and s == selected_step and c == selected_col:
-				col_color = COL_ACTIVE
+			if is_playing and s == current_step and mode == 0: col_color = COL_PLAYHEAD
+			elif ch == selected_ch and s == selected_step and c == selected_col: col_color = COL_ACTIVE
 			cells[c].add_theme_color_override("font_color", col_color)
 
 func _on_cell_input(event: InputEvent, ch: int, step: int, col: int) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		selected_ch = ch
-		selected_step = step
-		selected_col = col
+		selected_ch = ch; selected_step = step; selected_col = col
 		if is_recording:
 			is_dragging = true
 			drag_start_y = event.position.y
 			drag_start_value = _get_current_value(ch, step, col)
 		_refresh_all_channels()
 	elif event is InputEventMouseMotion and is_dragging and is_recording:
-		var delta_y = drag_start_y - event.position.y
-		var steps = int(delta_y / 12.0)
+		var steps = int((drag_start_y - event.position.y) / 12.0)
 		if steps != 0:
 			_apply_drag_value(ch, step, col, drag_start_value + steps)
 			_refresh_channel(ch)
@@ -400,14 +335,16 @@ func _on_cell_input(event: InputEvent, ch: int, step: int, col: int) -> void:
 		is_dragging = false
 
 func _get_current_value(ch: int, step: int, col: int) -> int:
-	if channel_view_mode[ch] == 0:
-		var d = phrases[ch][step]
-		match col:
-			0: return d.note if d.note >= 0 else 0
-			1: return d.oct
-			2: return d.inst
-			_: return 0
-	return 0
+	if channel_view_mode[ch] != 0: return 0
+	var d = phrases[ch][step]
+	match col:
+		0: return d.note if d.note >= 0 else 0
+		1: return d.oct
+		2: return d.inst
+		3, 4:
+			# For FX we return a simple index for cycling common commands later
+			return 0
+		_: return 0
 
 func _apply_drag_value(ch: int, step: int, col: int, val: int) -> void:
 	if channel_view_mode[ch] != 0: return
@@ -418,6 +355,13 @@ func _apply_drag_value(ch: int, step: int, col: int, val: int) -> void:
 			if d.note < 0: d.note = -1
 		1: d.oct = clamp(val, 0, 8)
 		2: d.inst = clamp(val, 0, 63)
+		3, 4:
+			# Quick FX value nudge while REC+drag on FX columns
+			# Cycles through useful presets for now
+			var presets = ["----", "V40", "V80", "VA0", "D20", "D50", "D90", "F20", "F80", "FA0", "M40", "M80", "S60", "SA0"]
+			var idx = clamp(val, 0, presets.size() - 1)
+			if col == 3: d.fx1 = presets[idx]
+			else: d.fx2 = presets[idx]
 	phrases[ch][step] = d
 
 func _toggle_channel_view(ch: int) -> void:
@@ -427,79 +371,50 @@ func _toggle_channel_view(ch: int) -> void:
 func _toggle_rec() -> void:
 	is_recording = not is_recording
 	if is_recording:
-		rec_btn.text = "REC*"
-		_style_btn_active(rec_btn, true)
-		status_label.text = "REC ON · PADS WRITE + PLAY · DRAG TO EDIT"
+		rec_btn.text = "REC*"; _style_btn_active(rec_btn, true)
+		status_label.text = "REC ON · DRAG FX COLUMNS TO CYCLE COMMANDS"
 	else:
-		rec_btn.text = "REC"
-		_style_btn_active(rec_btn, false)
+		rec_btn.text = "REC"; _style_btn_active(rec_btn, false)
 		is_dragging = false
 		status_label.text = "REC OFF"
 
 func _toggle_play() -> void:
 	if is_playing: return
-	is_playing = true
-	current_step = -1
-	step_timer = 0.0
-	play_btn.text = "PLAY*"
-	_advance_step()
+	is_playing = true; current_step = -1; step_timer = 0.0
+	play_btn.text = "PLAY*"; _advance_step()
 
 func _on_stop() -> void:
-	is_playing = false
-	current_step = 0
-	play_btn.text = "PLAY"
-	_refresh_all_channels()
-	status_label.text = "STOPPED"
+	is_playing = false; current_step = 0; play_btn.text = "PLAY"
+	_refresh_all_channels(); status_label.text = "STOPPED"
 
 func _change_bpm(d: int) -> void:
 	bpm = clamp(bpm + d, 40.0, 300.0)
 	bpm_label.text = "BPM %d" % int(bpm)
 
 func _make_console_btn(txt: String) -> Button:
-	var b := Button.new()
-	b.text = txt
-	b.focus_mode = Control.FOCUS_NONE
-	b.custom_minimum_size = Vector2(48, 26)
-	_style_btn_active(b, false)
-	return b
+	var b := Button.new(); b.text = txt; b.focus_mode = Control.FOCUS_NONE
+	b.custom_minimum_size = Vector2(48, 26); _style_btn_active(b, false); return b
 
 func _style_btn_active(b: Button, active: bool) -> void:
-	var sb := StyleBoxFlat.new()
-	sb.set_corner_radius_all(0)
-	sb.set_border_width_all(1)
+	var sb := StyleBoxFlat.new(); sb.set_corner_radius_all(0); sb.set_border_width_all(1)
 	if active:
 		sb.bg_color = COL_REC if b.text.begins_with("REC") else COL_ACTIVE
-		sb.border_color = sb.bg_color
-		b.add_theme_color_override("font_color", Color("#000000"))
+		sb.border_color = sb.bg_color; b.add_theme_color_override("font_color", Color("#000000"))
 	else:
-		sb.bg_color = COL_PANEL
-		sb.border_color = COL_BORDER
+		sb.bg_color = COL_PANEL; sb.border_color = COL_BORDER
 		b.add_theme_color_override("font_color", COL_TEXT)
-	b.add_theme_stylebox_override("normal", sb)
-	b.add_theme_stylebox_override("hover", sb)
-	b.add_theme_stylebox_override("pressed", sb)
-	b.add_theme_font_size_override("font_size", 11)
+	b.add_theme_stylebox_override("normal", sb); b.add_theme_stylebox_override("hover", sb)
+	b.add_theme_stylebox_override("pressed", sb); b.add_theme_font_size_override("font_size", 11)
 
 func _style_header_btn(b: Button) -> void:
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color("#111111")
-	sb.border_color = COL_BORDER
-	sb.set_border_width_all(1)
-	sb.set_corner_radius_all(0)
-	b.add_theme_stylebox_override("normal", sb)
-	b.add_theme_stylebox_override("hover", sb)
-	b.add_theme_stylebox_override("pressed", sb)
-	b.add_theme_color_override("font_color", COL_TEXT)
+	var sb := StyleBoxFlat.new(); sb.bg_color = Color("#111111"); sb.border_color = COL_BORDER
+	sb.set_border_width_all(1); sb.set_corner_radius_all(0)
+	b.add_theme_stylebox_override("normal", sb); b.add_theme_stylebox_override("hover", sb)
+	b.add_theme_stylebox_override("pressed", sb); b.add_theme_color_override("font_color", COL_TEXT)
 	b.add_theme_font_size_override("font_size", 11)
 
 func _style_panel(p: PanelContainer) -> void:
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = COL_PANEL
-	sb.border_color = COL_BORDER
-	sb.set_border_width_all(1)
-	sb.set_corner_radius_all(0)
-	sb.content_margin_left = 2
-	sb.content_margin_right = 2
-	sb.content_margin_top = 1
-	sb.content_margin_bottom = 1
+	var sb := StyleBoxFlat.new(); sb.bg_color = COL_PANEL; sb.border_color = COL_BORDER
+	sb.set_border_width_all(1); sb.set_corner_radius_all(0)
+	sb.content_margin_left = 2; sb.content_margin_right = 2; sb.content_margin_top = 1; sb.content_margin_bottom = 1
 	p.add_theme_stylebox_override("panel", sb)
