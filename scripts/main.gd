@@ -111,9 +111,9 @@ var mix_drag_start_val: float = 0.0
 func _ready() -> void:
 	live = LiveFx.new()
 	store = ProjectStore.new()
-	store.saved.connect(func(p): status_label.text = "SAVED  %s" % p.get_file() if status_label else print(p))
-	store.loaded.connect(func(p): status_label.text = "LOADED  %s" % p.get_file() if status_label else print(p))
-	store.failed.connect(func(m): status_label.text = m if status_label else print(m))
+	store.saved.connect(_on_store_saved)
+	store.loaded.connect(_on_store_loaded)
+	store.failed.connect(_on_store_failed)
 
 	clock = SbClock.new()
 	clock.steps = STEPS
@@ -193,6 +193,19 @@ func _empty_step() -> Dictionary:
 func _step(note: int, oct: int, inst: int, fx1: String, fx2: String) -> Dictionary:
 	return {"note": note, "oct": oct, "inst": inst, "fx1": fx1, "fx2": fx2}
 
+
+func _on_store_saved(p: String) -> void:
+	if status_label:
+		status_label.text = "SAVED  %s" % p.get_file()
+
+func _on_store_loaded(p: String) -> void:
+	if status_label:
+		status_label.text = "LOADED  %s" % p.get_file()
+
+func _on_store_failed(m: String) -> void:
+	if status_label:
+		status_label.text = m
+
 func _process(delta: float) -> void:
 	clock.tick(delta, 2)
 
@@ -210,16 +223,16 @@ func _on_clock_step(step: int) -> void:
 
 # ─── scenes ───────────────────────────────────────────
 
-func _show_scene(name: String) -> void:
-	current_scene = name
+func _show_scene(scene_name: String) -> void:
+	current_scene = scene_name
 	for h in [phrase_host, launch_host, settings_host, project_host, export_host, inst_host, mixer_host]:
 		if h:
 			h.visible = false
-	match name:
+	match scene_name:
 		"phrase", "table":
 			if phrase_host:
 				phrase_host.visible = true
-			if name == "table":
+			if scene_name == "table":
 				for ch in range(CHANNELS):
 					channel_view_mode[ch] = 1
 			else:
@@ -255,9 +268,9 @@ func _show_scene(name: String) -> void:
 			if export_host:
 				export_host.visible = true
 	if scene_title:
-		scene_title.text = name.to_upper()
+		scene_title.text = scene_name.to_upper()
 	if status_label:
-		status_label.text = "MAP  Shift+↑↓←→ · tap cells · SPACE play · scene %s" % name.to_upper()
+		status_label.text = "MAP  Shift+↑↓←→ · tap cells · SPACE play · scene %s" % scene_name.to_upper()
 
 func _on_map_scene(i: int) -> void:
 	_show_scene(scene_map.id_name(i))
@@ -619,9 +632,9 @@ func _build_phrase_view() -> void:
 		var col_hdr := HBoxContainer.new()
 		col_hdr.add_theme_constant_override("separation", 0)
 		vbox.add_child(col_hdr)
-		for name in ["NT", "OC", "IN", "FX1", "FX2"]:
+		for col_name in ["NT", "OC", "IN", "FX1", "FX2"]:
 			var l := Label.new()
-			l.text = name
+			l.text = col_name
 			l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 			l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			l.add_theme_color_override("font_color", COL_TEXT_DIM)
@@ -709,20 +722,20 @@ func _build_launch_view() -> void:
 	xy_row.add_child(xy_b_panel.get_parent())
 
 func _make_xy_pad(label: String, is_a: bool) -> ColorRect:
-	var wrap := VBoxContainer.new()
-	wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	wrap.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	wrap.add_theme_constant_override("separation", 2)
+	var xy_wrap := VBoxContainer.new()
+	xy_wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	xy_wrap.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	xy_wrap.add_theme_constant_override("separation", 2)
 	var l := Label.new()
 	l.text = label
 	l.add_theme_color_override("font_color", COL_TEXT_DIM)
 	l.add_theme_font_size_override("font_size", 10)
-	wrap.add_child(l)
+	xy_wrap.add_child(l)
 	var panel := PanelContainer.new()
 	panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_style_panel(panel)
-	wrap.add_child(panel)
+	xy_wrap.add_child(panel)
 	var area := ColorRect.new()
 	area.color = Color("#111111")
 	area.custom_minimum_size = Vector2(120, 120)
@@ -758,7 +771,7 @@ func _make_xy_pad(label: String, is_a: bool) -> ColorRect:
 			_place_xy_dot(dot, area, Vector2(nx, ny))
 	)
 	# store wrap as child of caller's parent later — return area for ref, attach wrap via meta
-	area.set_meta("wrap", wrap)
+	area.set_meta("wrap", xy_wrap)
 	# reparent trick: caller adds wrap
 	# We'll return area but caller should add wrap — fix by returning wrap's area after attaching
 	return area
