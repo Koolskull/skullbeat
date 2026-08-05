@@ -1,7 +1,9 @@
 extends Control
 
-## SKULLBEAT — Super-instrument tracker
-## Monophonic channels: each new row note chokes previous on same channel
+## SKULLBEAT UI shell
+## Owns: pattern data, tracker view, input
+## Does NOT own: DSP, clock math, sample parse
+## Layers: SbClock → note events → SynthEngine → Dsp
 
 const CHANNELS := 4
 const STEPS := 16
@@ -26,24 +28,24 @@ const COL_TEXT_DIM := Color("#666666")
 const COL_TEXT_BRIGHT := Color("#ffffff")
 const COL_REC := Color("#ff2222")
 
-var bpm: float = 128.0
-var is_playing := false
-var is_recording := false
-var current_step := 0
-var prev_play_step := -1
-var step_timer := 0.0
-var visible_rows := 16
+var clock: SbClock
+var synth: SynthEngine
+var sample_import: SampleImport
+var auv3: AUv3Host
 
 var phrases: Array = []
 var tables: Array = []
 var channel_view_mode: Array = []
 
+var is_recording := false
 var selected_ch := 0
 var selected_step := 0
 var selected_col := 0
 var drag_start_y := 0.0
 var drag_start_value := 0
 var is_dragging := false
+var visible_rows := 16
+var prev_step := -1
 
 var header_bar: HBoxContainer
 var channel_containers: Array = []
@@ -52,11 +54,12 @@ var status_label: Label
 var rec_btn: Button
 var play_btn: Button
 var bpm_label: Label
-var synth: SynthEngine
-var sample_import: SampleImport
-var auv3: AUv3Host
 
 func _ready() -> void:
+	clock = SbClock.new()
+	clock.steps = STEPS
+	clock.stepped.connect(_on_clock_step)
+
 	synth = SynthEngine.new()
 	add_child(synth)
 	auv3 = AUv3Host.new()
@@ -64,10 +67,11 @@ func _ready() -> void:
 	sample_import = SampleImport.new()
 	sample_import.setup(self, synth)
 	sample_import.import_finished.connect(_on_import_finished)
-	# Short baked one-shots for demo drums (sample-only, no double synth)
+
 	synth.bake_procedural_sample(1, "kick")
 	synth.bake_procedural_sample(6, "snare")
 	synth.bake_procedural_sample(10, "hat")
+
 	_init_data()
 	_build_ui()
 	_recalc_layout()
@@ -77,7 +81,7 @@ func _init_data() -> void:
 	for ch in range(CHANNELS):
 		var phrase: Array = []
 		for s in range(STEPS):
-			phrase.append({"note": -1, "oct": 4, "inst": 0, "fx1": "----", "fx2": "----", "chord": ""})
+			phrase.append(_empty_step())
 		phrases.append(phrase)
 		var table: Array = []
 		for r in range(TABLE_STEPS):
@@ -85,46 +89,39 @@ func _init_data() -> void:
 		tables.append(table)
 		channel_view_mode.append(0)
 
-	phrases[0][0]  = {"note": 0, "oct": 2, "inst": 1, "fx1": "V90", "fx2": "D40", "chord": ""}
-	phrases[0][8]  = {"note": 0, "oct": 2, "inst": 1, "fx1": "VA0", "fx2": "D90", "chord": ""}
-	phrases[1][4]  = {"note": 0, "oct": 3, "inst": 6, "fx1": "V80", "fx2": "D50", "chord": ""}
-	phrases[1][12] = {"note": 0, "oct": 3, "inst": 6, "fx1": "V60", "fx2": "D30", "chord": ""}
-	phrases[2][0]  = {"note": 0, "oct": 5, "inst": 10, "fx1": "V70", "fx2": "D20", "chord": ""}
-	phrases[2][2]  = {"note": 0, "oct": 5, "inst": 10, "fx1": "V50", "fx2": "D10", "chord": ""}
-	phrases[2][4]  = {"note": 0, "oct": 5, "inst": 10, "fx1": "V70", "fx2": "D20", "chord": ""}
-	phrases[2][6]  = {"note": 0, "oct": 5, "inst": 10, "fx1": "V40", "fx2": "D08", "chord": ""}
-	phrases[2][8]  = {"note": 0, "oct": 5, "inst": 10, "fx1": "V70", "fx2": "D20", "chord": ""}
-	phrases[2][10] = {"note": 0, "oct": 5, "inst": 10, "fx1": "V50", "fx2": "D10", "chord": ""}
-	phrases[2][12] = {"note": 0, "oct": 5, "inst": 10, "fx1": "V70", "fx2": "D20", "chord": ""}
-	phrases[2][14] = {"note": 0, "oct": 5, "inst": 10, "fx1": "V30", "fx2": "D05", "chord": ""}
-	# CH4 uses pure synth (TEXTURE/BASS) — no baked sample
-	phrases[3][0]  = {"note": 0, "oct": 2, "inst": 16, "fx1": "V88", "fx2": "FA0", "chord": ""}
-	phrases[3][8]  = {"note": 7, "oct": 2, "inst": 16, "fx1": "V70", "fx2": "F40", "chord": ""}
+	# demo groove — short samples + one synth line
+	phrases[0][0]  = _step(0, 2, 1, "V90", "D40")
+	phrases[0][8]  = _step(0, 2, 1, "VA0", "D90")
+	phrases[1][4]  = _step(0, 3, 6, "V80", "D50")
+	phrases[1][12] = _step(0, 3, 6, "V60", "D30")
+	phrases[2][0]  = _step(0, 5, 10, "V70", "D20")
+	phrases[2][2]  = _step(0, 5, 10, "V50", "D10")
+	phrases[2][4]  = _step(0, 5, 10, "V70", "D20")
+	phrases[2][6]  = _step(0, 5, 10, "V40", "D08")
+	phrases[2][8]  = _step(0, 5, 10, "V70", "D20")
+	phrases[2][10] = _step(0, 5, 10, "V50", "D10")
+	phrases[2][12] = _step(0, 5, 10, "V70", "D20")
+	phrases[2][14] = _step(0, 5, 10, "V30", "D05")
+	phrases[3][0]  = _step(0, 2, 16, "V88", "FA0")
+	phrases[3][8]  = _step(7, 2, 16, "V70", "F40")
+
+func _empty_step() -> Dictionary:
+	return {"note": -1, "oct": 4, "inst": 0, "fx1": "----", "fx2": "----"}
+
+func _step(note: int, oct: int, inst: int, fx1: String, fx2: String) -> Dictionary:
+	return {"note": note, "oct": oct, "inst": inst, "fx1": fx1, "fx2": fx2}
 
 func _process(delta: float) -> void:
-	if not is_playing:
-		return
-	var step_dur: float = 60.0 / bpm / 4.0
-	# Clamp delta so a hitch can't dump a huge backlog of notes
-	step_timer += minf(delta, step_dur * 2.0)
-	var advanced := 0
-	while step_timer >= step_dur and advanced < 3:
-		step_timer -= step_dur
-		_advance_step()
-		advanced += 1
-	# Drop leftover time if we still lag — keeps tempo stable instead of slowing forever
-	if step_timer > step_dur * 2.0:
-		step_timer = 0.0
+	clock.tick(delta, 2)
 
-func _advance_step() -> void:
-	var old_step: int = current_step
-	current_step = (current_step + 1) % STEPS
+func _on_clock_step(step: int) -> void:
+	var old: int = prev_step
+	prev_step = step
 	for ch in range(CHANNELS):
-		var d = phrases[ch][current_step]
+		var d = phrases[ch][step]
 		if d.note >= 0:
 			synth.note_on(d.note, d.oct, d.inst, d.fx1, d.fx2, 1.0, ch)
-	_refresh_playhead_rows(old_step, current_step)
-	prev_play_step = old_step
+	_paint_playhead(old, step)
 
 func _import_target_inst() -> int:
 	if channel_view_mode[selected_ch] == 0:
@@ -136,11 +133,11 @@ func _import_target_inst() -> int:
 func _do_import() -> void:
 	var tid = _import_target_inst()
 	sample_import.set_target_instrument(tid)
-	status_label.text = "IMPORT -> INST %02X  (WAV via Files / AudioShare)" % tid
+	status_label.text = "IMPORT -> INST %02X" % tid
 	sample_import.open_file_picker()
 
 func _do_audioshare() -> void:
-	status_label.text = "OPENING AUDIOSHARE · export WAV · then IMP"
+	status_label.text = "AUDIOSHARE → export WAV → IMP"
 	SampleImport.open_audioshare()
 
 func _on_import_finished(success: bool, message: String, inst_id: int) -> void:
@@ -153,15 +150,15 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	var key = event.keycode
 	if KOALA_PADS.has(key):
-		_on_pad_triggered(KOALA_PADS[key])
+		_on_pad(KOALA_PADS[key])
 		get_viewport().set_input_as_handled()
 		return
 	match key:
 		KEY_SPACE:
-			if is_playing:
-				_on_stop()
+			if clock.playing:
+				_stop()
 			else:
-				_toggle_play()
+				_play()
 			get_viewport().set_input_as_handled()
 		KEY_0:
 			_toggle_rec()
@@ -180,11 +177,11 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 		KEY_UP:
 			selected_step = maxi(0, selected_step - 1)
-			_refresh_all_channels()
+			_refresh_all()
 			get_viewport().set_input_as_handled()
 		KEY_DOWN:
 			selected_step = mini(STEPS - 1, selected_step + 1)
-			_refresh_all_channels()
+			_refresh_all()
 			get_viewport().set_input_as_handled()
 		KEY_LEFT:
 			if selected_col > 0:
@@ -192,7 +189,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			else:
 				selected_ch = maxi(0, selected_ch - 1)
 				selected_col = 4
-			_refresh_all_channels()
+			_refresh_all()
 			get_viewport().set_input_as_handled()
 		KEY_RIGHT:
 			if selected_col < 4:
@@ -200,28 +197,53 @@ func _unhandled_input(event: InputEvent) -> void:
 			else:
 				selected_ch = mini(CHANNELS - 1, selected_ch + 1)
 				selected_col = 0
-			_refresh_all_channels()
+			_refresh_all()
 			get_viewport().set_input_as_handled()
 		KEY_BACKSPACE, KEY_DELETE:
 			if channel_view_mode[selected_ch] == 0:
-				phrases[selected_ch][selected_step] = {"note": -1, "oct": 4, "inst": 0, "fx1": "----", "fx2": "----", "chord": ""}
-				_refresh_channel(selected_ch)
+				phrases[selected_ch][selected_step] = _empty_step()
+				_refresh_ch(selected_ch)
 			get_viewport().set_input_as_handled()
 
-func _on_pad_triggered(pad_idx: int) -> void:
+func _on_pad(pad_idx: int) -> void:
 	var inst: int = pad_idx + 1
 	var note: int = pad_idx % 12
 	var oct: int = 2 + int(float(pad_idx) / 8.0)
 	synth.note_on(note, oct, inst, "----", "----", 1.0, -1)
-	status_label.text = "PAD %02d -> INST %02X  %s%d" % [pad_idx + 1, inst, NOTE_NAMES[note], oct]
+	status_label.text = "PAD %02d → INST %02X" % [pad_idx + 1, inst]
 	if is_recording and channel_view_mode[selected_ch] == 0:
-		phrases[selected_ch][selected_step] = {
-			"note": note, "oct": oct, "inst": inst,
-			"fx1": "V80", "fx2": "----", "chord": ""
-		}
-		_refresh_channel(selected_ch)
+		phrases[selected_ch][selected_step] = _step(note, oct, inst, "V80", "----")
+		_refresh_ch(selected_ch)
 		selected_step = (selected_step + 1) % STEPS
-		_refresh_all_channels()
+		_refresh_all()
+
+func _play() -> void:
+	prev_step = -1
+	play_btn.text = "PLAY*"
+	clock.play()
+
+func _stop() -> void:
+	clock.stop()
+	play_btn.text = "PLAY"
+	synth.stop_all()
+	prev_step = -1
+	_refresh_all()
+
+func _toggle_rec() -> void:
+	is_recording = not is_recording
+	if is_recording:
+		rec_btn.text = "REC*"
+		_style_btn(rec_btn, true)
+	else:
+		rec_btn.text = "REC"
+		_style_btn(rec_btn, false)
+		is_dragging = false
+
+func _change_bpm(d: int) -> void:
+	clock.nudge_bpm(float(d))
+	bpm_label.text = "BPM %d" % int(clock.bpm)
+
+# ─── UI ───────────────────────────────────────────────
 
 func _build_ui() -> void:
 	var bg := ColorRect.new()
@@ -229,6 +251,7 @@ func _build_ui() -> void:
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(bg)
 	move_child(bg, 0)
+
 	var root := VBoxContainer.new()
 	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	root.add_theme_constant_override("separation", 2)
@@ -237,77 +260,90 @@ func _build_ui() -> void:
 	root.offset_right = -4
 	root.offset_bottom = -4
 	add_child(root)
+
 	header_bar = HBoxContainer.new()
 	header_bar.add_theme_constant_override("separation", 6)
 	root.add_child(header_bar)
+
 	var title := Label.new()
 	title.text = "SKULLBEAT"
 	title.add_theme_color_override("font_color", COL_TEXT_BRIGHT)
 	title.add_theme_font_size_override("font_size", 16)
 	header_bar.add_child(title)
-	var mode_lbl := Label.new()
-	mode_lbl.text = "MONO CH · CHOKE"
-	mode_lbl.add_theme_color_override("font_color", COL_TEXT_DIM)
-	mode_lbl.add_theme_font_size_override("font_size", 11)
-	header_bar.add_child(mode_lbl)
+
+	var mode := Label.new()
+	mode.text = "MODULAR · MIN"
+	mode.add_theme_color_override("font_color", COL_TEXT_DIM)
+	mode.add_theme_font_size_override("font_size", 11)
+	header_bar.add_child(mode)
+
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header_bar.add_child(spacer)
+
 	bpm_label = Label.new()
-	bpm_label.text = "BPM %d" % int(bpm)
+	bpm_label.text = "BPM %d" % int(clock.bpm)
 	bpm_label.add_theme_color_override("font_color", COL_ACTIVE)
 	bpm_label.add_theme_font_size_override("font_size", 13)
 	header_bar.add_child(bpm_label)
-	var bpm_down := _make_console_btn("-")
-	bpm_down.pressed.connect(func(): _change_bpm(-1))
-	header_bar.add_child(bpm_down)
-	var bpm_up := _make_console_btn("+")
-	bpm_up.pressed.connect(func(): _change_bpm(1))
-	header_bar.add_child(bpm_up)
-	var imp_btn := _make_console_btn("IMP")
-	imp_btn.pressed.connect(_do_import)
-	header_bar.add_child(imp_btn)
-	var as_btn := _make_console_btn("AS")
-	as_btn.pressed.connect(_do_audioshare)
-	header_bar.add_child(as_btn)
-	rec_btn = _make_console_btn("REC")
+
+	var bd := _btn("-")
+	bd.pressed.connect(func(): _change_bpm(-1))
+	header_bar.add_child(bd)
+	var bu := _btn("+")
+	bu.pressed.connect(func(): _change_bpm(1))
+	header_bar.add_child(bu)
+	var imp := _btn("IMP")
+	imp.pressed.connect(_do_import)
+	header_bar.add_child(imp)
+	var ash := _btn("AS")
+	ash.pressed.connect(_do_audioshare)
+	header_bar.add_child(ash)
+	rec_btn = _btn("REC")
 	rec_btn.pressed.connect(_toggle_rec)
 	header_bar.add_child(rec_btn)
-	play_btn = _make_console_btn("PLAY")
-	play_btn.pressed.connect(_toggle_play)
+	play_btn = _btn("PLAY")
+	play_btn.pressed.connect(func():
+		if clock.playing:
+			_stop()
+		else:
+			_play()
+	)
 	header_bar.add_child(play_btn)
-	var stop_btn := _make_console_btn("STOP")
-	stop_btn.pressed.connect(_on_stop)
-	header_bar.add_child(stop_btn)
+	var st := _btn("STOP")
+	st.pressed.connect(_stop)
+	header_bar.add_child(st)
+
 	var channels_row := HBoxContainer.new()
 	channels_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	channels_row.add_theme_constant_override("separation", 3)
 	root.add_child(channels_row)
+
 	channel_containers.clear()
 	step_labels.clear()
 	for ch in range(CHANNELS):
-		var ch_panel := PanelContainer.new()
-		ch_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		ch_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
-		_style_panel(ch_panel)
-		channels_row.add_child(ch_panel)
-		var ch_vbox := VBoxContainer.new()
-		ch_vbox.add_theme_constant_override("separation", 0)
-		ch_panel.add_child(ch_vbox)
-		var ch_header := Button.new()
-		ch_header.text = "CH%d  PHRASE" % (ch + 1)
-		ch_header.focus_mode = Control.FOCUS_NONE
-		ch_header.custom_minimum_size.y = 22
-		_style_header_btn(ch_header)
-		var ch_idx = ch
-		ch_header.pressed.connect(func(): _toggle_channel_view(ch_idx))
-		ch_vbox.add_child(ch_header)
+		var panel := PanelContainer.new()
+		panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		_style_panel(panel)
+		channels_row.add_child(panel)
+		var vbox := VBoxContainer.new()
+		vbox.add_theme_constant_override("separation", 0)
+		panel.add_child(vbox)
+		var hdr := Button.new()
+		hdr.text = "CH%d  PHRASE" % (ch + 1)
+		hdr.focus_mode = Control.FOCUS_NONE
+		hdr.custom_minimum_size.y = 22
+		_style_hdr(hdr)
+		var ch_i = ch
+		hdr.pressed.connect(func(): _toggle_view(ch_i))
+		vbox.add_child(hdr)
 		var col_hdr := HBoxContainer.new()
 		col_hdr.add_theme_constant_override("separation", 0)
-		ch_vbox.add_child(col_hdr)
-		for col_name in ["NT", "OC", "IN", "FX1", "FX2"]:
+		vbox.add_child(col_hdr)
+		for name in ["NT", "OC", "IN", "FX1", "FX2"]:
 			var l := Label.new()
-			l.text = col_name
+			l.text = name
 			l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 			l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			l.add_theme_color_override("font_color", COL_TEXT_DIM)
@@ -316,38 +352,39 @@ func _build_ui() -> void:
 		var steps_box := VBoxContainer.new()
 		steps_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		steps_box.add_theme_constant_override("separation", 0)
-		ch_vbox.add_child(steps_box)
-		channel_containers.append({"panel": ch_panel, "header": ch_header, "steps_box": steps_box, "col_hdr": col_hdr})
+		vbox.add_child(steps_box)
+		channel_containers.append({"header": hdr, "steps_box": steps_box})
 		step_labels.append([])
+
 	status_label = Label.new()
-	status_label.text = "MONO choke · SPACE play · pads live · IMP samples"
+	status_label.text = "SPACE play · pads live · IMP sample · REC drag-edit"
 	status_label.add_theme_color_override("font_color", COL_TEXT_DIM)
 	status_label.add_theme_font_size_override("font_size", 10)
 	root.add_child(status_label)
 
 func _recalc_layout() -> void:
-	var avail_h = size.y - 80.0
-	if avail_h < 100.0:
-		avail_h = 400.0
-	visible_rows = clampi(int(avail_h / 18.0), 8, STEPS)
-	_rebuild_step_rows()
+	var h: float = size.y - 80.0
+	if h < 100.0:
+		h = 400.0
+	visible_rows = clampi(int(h / 18.0), 8, STEPS)
+	_rebuild_rows()
 
-func _rebuild_step_rows() -> void:
+func _rebuild_rows() -> void:
 	for ch in range(CHANNELS):
-		var steps_box: VBoxContainer = channel_containers[ch]["steps_box"]
-		for child in steps_box.get_children():
-			child.queue_free()
+		var box: VBoxContainer = channel_containers[ch]["steps_box"]
+		for c in box.get_children():
+			c.queue_free()
 		step_labels[ch].clear()
 		for s in range(visible_rows):
 			var row := HBoxContainer.new()
 			row.add_theme_constant_override("separation", 0)
 			row.custom_minimum_size.y = 18
-			var bg_rect := ColorRect.new()
-			bg_rect.color = COL_ROW_ALT if (s % 4) == 0 else COL_BG
-			bg_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-			bg_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			row.add_child(bg_rect)
-			row.move_child(bg_rect, 0)
+			var bg := ColorRect.new()
+			bg.color = COL_ROW_ALT if (s % 4) == 0 else COL_BG
+			bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			row.add_child(bg)
+			row.move_child(bg, 0)
 			var cells: Array = []
 			for col in range(5):
 				var cell := Label.new()
@@ -356,66 +393,64 @@ func _rebuild_step_rows() -> void:
 				cell.add_theme_color_override("font_color", COL_TEXT)
 				cell.add_theme_font_size_override("font_size", 12)
 				cell.mouse_filter = Control.MOUSE_FILTER_STOP
-				cell.gui_input.connect(_on_cell_input.bind(ch, s, col))
+				cell.gui_input.connect(_on_cell.bind(ch, s, col))
 				row.add_child(cell)
 				cells.append(cell)
-			steps_box.add_child(row)
+			box.add_child(row)
 			step_labels[ch].append(cells)
-	_refresh_all_channels()
+	_refresh_all()
 
-func _refresh_all_channels() -> void:
-	for ch in range(CHANNELS):
-		_refresh_channel(ch)
-
-## Only recolor the old + new playhead rows (was recoloring entire grid every step)
-func _refresh_playhead_rows(old_step: int, new_step: int) -> void:
+func _paint_playhead(old_s: int, new_s: int) -> void:
 	for ch in range(CHANNELS):
 		if channel_view_mode[ch] != 0:
 			continue
-		if old_step >= 0 and old_step < visible_rows and old_step < step_labels[ch].size():
-			_color_row(ch, old_step, false)
-		if new_step >= 0 and new_step < visible_rows and new_step < step_labels[ch].size():
-			_color_row(ch, new_step, true)
+		if old_s >= 0 and old_s < step_labels[ch].size():
+			_color_row(ch, old_s, false)
+		if new_s >= 0 and new_s < step_labels[ch].size():
+			_color_row(ch, new_s, true)
 
-func _color_row(ch: int, step: int, is_playhead: bool) -> void:
-	var cells: Array = step_labels[ch][step]
+func _color_row(ch: int, s: int, playhead: bool) -> void:
+	var cells: Array = step_labels[ch][s]
 	for c in range(5):
-		var col_color = COL_TEXT
-		if is_playhead and is_playing:
-			col_color = COL_PLAYHEAD
-		elif ch == selected_ch and step == selected_step and c == selected_col:
-			col_color = COL_ACTIVE
-		cells[c].add_theme_color_override("font_color", col_color)
+		var col := COL_TEXT
+		if playhead and clock.playing:
+			col = COL_PLAYHEAD
+		elif ch == selected_ch and s == selected_step and c == selected_col:
+			col = COL_ACTIVE
+		cells[c].add_theme_color_override("font_color", col)
 
-func _refresh_channel(ch: int) -> void:
-	var mode = channel_view_mode[ch]
-	var header: Button = channel_containers[ch]["header"]
-	header.text = "CH%d  %s" % [ch + 1, "TABLE" if mode == 1 else "PHRASE"]
+func _refresh_all() -> void:
+	for ch in range(CHANNELS):
+		_refresh_ch(ch)
+
+func _refresh_ch(ch: int) -> void:
+	var mode: int = channel_view_mode[ch]
+	channel_containers[ch]["header"].text = "CH%d  %s" % [ch + 1, "TABLE" if mode == 1 else "PHRASE"]
 	for s in range(mini(visible_rows, STEPS)):
 		var cells: Array = step_labels[ch][s]
 		if mode == 0:
-			var data = phrases[ch][s]
-			cells[0].text = "---" if data.note < 0 else NOTE_NAMES[data.note]
-			cells[1].text = "%d" % data.oct if data.note >= 0 else "-"
-			cells[2].text = "%02X" % data.inst if data.note >= 0 else "--"
-			cells[3].text = data.fx1
-			cells[4].text = data.fx2
+			var d = phrases[ch][s]
+			cells[0].text = "---" if d.note < 0 else NOTE_NAMES[d.note]
+			cells[1].text = "%d" % d.oct if d.note >= 0 else "-"
+			cells[2].text = "%02X" % d.inst if d.note >= 0 else "--"
+			cells[3].text = d.fx1
+			cells[4].text = d.fx2
 		else:
-			var tdata = tables[ch][s]
-			cells[0].text = tdata.cmd1
-			cells[1].text = tdata.val1
-			cells[2].text = tdata.cmd2
-			cells[3].text = tdata.val2
+			var t = tables[ch][s]
+			cells[0].text = t.cmd1
+			cells[1].text = t.val1
+			cells[2].text = t.cmd2
+			cells[3].text = t.val2
 			cells[4].text = ""
 		for c in range(5):
-			var col_color = COL_TEXT
-			if is_playing and s == current_step and mode == 0:
-				col_color = COL_PLAYHEAD
+			var col := COL_TEXT
+			if clock.playing and s == clock.step and mode == 0:
+				col = COL_PLAYHEAD
 			elif ch == selected_ch and s == selected_step and c == selected_col:
-				col_color = COL_ACTIVE
-			cells[c].add_theme_color_override("font_color", col_color)
+				col = COL_ACTIVE
+			cells[c].add_theme_color_override("font_color", col)
 
-func _on_cell_input(event: InputEvent, ch: int, step: int, col: int) -> void:
+func _on_cell(event: InputEvent, ch: int, step: int, col: int) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		selected_ch = ch
 		selected_step = step
@@ -423,39 +458,33 @@ func _on_cell_input(event: InputEvent, ch: int, step: int, col: int) -> void:
 		if is_recording:
 			is_dragging = true
 			drag_start_y = event.position.y
-			drag_start_value = _get_current_value(ch, step, col)
-		_refresh_all_channels()
+			drag_start_value = _cell_val(ch, step, col)
+		_refresh_all()
 	elif event is InputEventMouseMotion and is_dragging and is_recording:
-		var steps = int((drag_start_y - event.position.y) / 12.0)
-		if steps != 0:
-			_apply_drag_value(ch, step, col, drag_start_value + steps)
-			_refresh_channel(ch)
+		var dsteps = int((drag_start_y - event.position.y) / 12.0)
+		if dsteps != 0:
+			_apply_drag(ch, step, col, drag_start_value + dsteps)
+			_refresh_ch(ch)
 	elif event is InputEventMouseButton and not event.pressed:
 		is_dragging = false
 
-func _get_current_value(ch: int, step: int, col: int) -> int:
+func _cell_val(ch: int, step: int, col: int) -> int:
 	if channel_view_mode[ch] != 0:
 		return 0
 	var d = phrases[ch][step]
 	match col:
-		0:
-			return d.note if d.note >= 0 else 0
-		1:
-			return d.oct
-		2:
-			return d.inst
-		_:
-			return 0
+		0: return d.note if d.note >= 0 else 0
+		1: return d.oct
+		2: return d.inst
+		_: return 0
 
-func _apply_drag_value(ch: int, step: int, col: int, val: int) -> void:
+func _apply_drag(ch: int, step: int, col: int, val: int) -> void:
 	if channel_view_mode[ch] != 0:
 		return
 	var d = phrases[ch][step]
 	match col:
 		0:
 			d.note = clampi(val, -1, 11)
-			if d.note < 0:
-				d.note = -1
 		1:
 			d.oct = clampi(val, 0, 8)
 		2:
@@ -469,51 +498,19 @@ func _apply_drag_value(ch: int, step: int, col: int, val: int) -> void:
 				d.fx2 = presets[idx]
 	phrases[ch][step] = d
 
-func _toggle_channel_view(ch: int) -> void:
+func _toggle_view(ch: int) -> void:
 	channel_view_mode[ch] = 1 - channel_view_mode[ch]
-	_refresh_channel(ch)
+	_refresh_ch(ch)
 
-func _toggle_rec() -> void:
-	is_recording = not is_recording
-	if is_recording:
-		rec_btn.text = "REC*"
-		_style_btn_active(rec_btn, true)
-	else:
-		rec_btn.text = "REC"
-		_style_btn_active(rec_btn, false)
-		is_dragging = false
-
-func _toggle_play() -> void:
-	if is_playing:
-		return
-	is_playing = true
-	current_step = -1
-	prev_play_step = -1
-	step_timer = 0.0
-	play_btn.text = "PLAY*"
-	_advance_step()
-
-func _on_stop() -> void:
-	is_playing = false
-	current_step = 0
-	prev_play_step = -1
-	play_btn.text = "PLAY"
-	synth.stop_all()
-	_refresh_all_channels()
-
-func _change_bpm(d: int) -> void:
-	bpm = clampf(bpm + float(d), 40.0, 300.0)
-	bpm_label.text = "BPM %d" % int(bpm)
-
-func _make_console_btn(txt: String) -> Button:
+func _btn(txt: String) -> Button:
 	var b := Button.new()
 	b.text = txt
 	b.focus_mode = Control.FOCUS_NONE
 	b.custom_minimum_size = Vector2(44, 26)
-	_style_btn_active(b, false)
+	_style_btn(b, false)
 	return b
 
-func _style_btn_active(b: Button, active: bool) -> void:
+func _style_btn(b: Button, active: bool) -> void:
 	var sb := StyleBoxFlat.new()
 	sb.set_corner_radius_all(0)
 	sb.set_border_width_all(1)
@@ -530,7 +527,7 @@ func _style_btn_active(b: Button, active: bool) -> void:
 	b.add_theme_stylebox_override("pressed", sb)
 	b.add_theme_font_size_override("font_size", 11)
 
-func _style_header_btn(b: Button) -> void:
+func _style_hdr(b: Button) -> void:
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color("#111111")
 	sb.border_color = COL_BORDER
