@@ -4,8 +4,8 @@ extends RefCounted
 ## Minimal pure DSP tools. No state. No nodes. Call from render path only.
 ## Layers above own state; this file only does math.
 
-const SR := 44100.0
-const INV_SR := 1.0 / 44100.0
+const SR := 22050.0
+const INV_SR := 1.0 / 22050.0
 const TWO_PI := PI * 2.0
 const MIN_DECAY := 0.02
 

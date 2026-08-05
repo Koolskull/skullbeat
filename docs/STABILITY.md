@@ -1,10 +1,22 @@
-# Stability
+# Stability notes (Xogot / iPad)
 
-## Landed
-- scene_map: do_emit
-- live_fx: xy_a Y=0
-- synth_engine: MAX_FRAMES 2048, buffer 0.15, block-rate stutter
+## Tracker UI
+- Phrase rows are built on first `_recalc_layout` when `step_labels` is empty.
+- Row rebuild is **blocked while `clock.playing`** to avoid audio hitches.
+- Alternating row tint uses `modulate` (not ColorRect) so Labels always layout correctly.
 
-## Pending
-- main.gd XY: use get_meta("wrap") not get_parent()
-- main.gd: no rebuild while playing
+## Audio (GDScript AudioStreamGenerator)
+Official docs: prefer **22 050 Hz** (or 11 025) from GDScript; default buffer is 0.5 s.
+
+| Setting | Value | Why |
+|---------|-------|-----|
+| `Dsp.SR` / `mix_rate` | **22050** | Half the CPU vs 44.1k; fine for drums/bass |
+| `buffer_length` | **0.35 s** | Headroom against main-thread stalls |
+| `MAX_FRAMES` | 2048 | Cap per fill |
+| Fill loop | up to 4 chunks/frame | Keep buffer from draining |
+| Levels | cached per block | No method calls per sample |
+
+If playback dies after a hard underrun, `_process` restarts `player.play()`.
+
+## XY pads
+Use `area.get_meta("wrap")` when parenting — never `get_parent()` of the ColorRect.
