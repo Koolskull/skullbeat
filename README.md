@@ -3,65 +3,55 @@
 Tracker-style drum machine for **Xogot / Godot 4** on iPad.  
 K-OS III aesthetic · mono channels · Koala pads · LGPT/LSDJ scene map.
 
-## Architecture
-
-```
-UI (main.gd)     multi-window host + pattern banks
-SceneMap         top-left 2×3 map (tap / Shift+arrows)
-SbClock          tempo / steps
-LiveFx           glitch · retrig · stutter · XY · mute
-ProjectStore     save / load / export JSON
-SynthEngine      voice pool + mix
-Instrument       data only
-Dsp              pure math
-```
-
 ## Scene map (top-left)
 
 ```
-PHR  LCH  SET
-TBL  PRJ  EXP
+PHR  LCH  INS  MIX
+TBL  PRJ  SET  EXP
 ```
 
 | Cell | Window |
 |------|--------|
 | **PHR** | Phrase tracker |
-| **LCH** | Live clip launcher + FX + XY pads |
-| **SET** | Project settings (name, BPM) |
+| **LCH** | Live clip launcher + FX + XY |
+| **INS** | Instrument editor |
+| **MIX** | Channel + master levels |
 | **TBL** | Table view |
-| **PRJ** | Save / load projects |
+| **PRJ** | Save / load |
+| **SET** | Project settings |
 | **EXP** | Export song + import sample |
 
-- **Keyboard:** hold **Shift + arrows** to move map (LGPT/LSDJ style)
-- **Touch:** tap a map cell
+**Shift + arrows** move map · **tap** cells on touch.
+
+## Instrument editor (INS)
+
+- Browse inst `00–3F` with `<` `>` or **[ ]**
+- **SYNTH / SAMP** source select (sample XOR synth)
+- **ALGO±** cycle kick/snare/hat/clap/bass/texture/fm/noise
+- **GAIN±** instrument level
+- **FX1–3** type cycle + wet (rack data; bus wet still live via LCH)
+- **PREV / P** audition · **IMP** load WAV into this inst
+
+## Mixer (MIX)
+
+- Faders **CH1–4** + **MST** (0–150%)
+- Tap/drag fader · **M** mute per channel
+- Levels applied in the engine voice mix (cheap)
 
 ## Live launcher (LCH)
 
-- **A B C D** — clip banks (4 phrase banks)
-- **CH1–4** — channel mute
-- **GLITCH / RTRG / STUT / KILL** — performance FX
-- **XY A** — X=filter bias · Y=drive/dist
-- **XY B** — X=delay wet · Y=delay time
-
-Keys: **G** glitch · **T** retrig · **Y** stutter · **K** kill
+A–D banks · mute · GLITCH/RTRG/STUT/KILL · XY pads  
+Keys: **G T Y K**
 
 ## Project
 
-- **SAVE** → `user://projects/<NAME>.skull.json`
-- **EXPORT** → tracker text dump + JSON twin
-- **Ctrl/Cmd+S** save
+SAVE → `user://projects/` · EXPORT text+JSON · **Ctrl/Cmd+S**
 
-## Tracker
-
-4 channels · `NT OC IN FX1 FX2` · mono choke  
-FX: **V**el **D**ecay **F**ilter **M**od **P**itch **S**tart-pitch
-
-## Keys
+## Architecture
 
 ```
-1 2 3 4 / Q W E R / A S D F / Z X C V   pads
-SPACE play · 0 REC · I import · U AudioShare
-Shift+arrows  scene map
+UI → SceneMap / Clock / LiveFx / ProjectStore
+   → SynthEngine → Instrument → Dsp
 ```
 
-Pull `main` in Xogot → open project → run.
+Pull `main` in Xogot and run.
