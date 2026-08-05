@@ -1,10 +1,8 @@
 class_name SynthEngine
 extends Node
 
-## Monophonic-per-channel audio engine
-## Each tracker channel owns 1 voice — a new note on that channel kills the previous.
-## Live pads use a small free pool (also monophonic per pad voice).
-## Chord column can later share a channel by expanding voices-per-channel.
+## Lightweight monophonic-per-channel audio engine for iPad/Xogot
+## Designed so main-thread GDScript DSP never starves the sequencer.
 
 const SAMPLE_RATE := 44100.0
 const TRACKER_CHANNELS := 4
@@ -13,17 +11,26 @@ const TOTAL_VOICES := TRACKER_CHANNELS + PAD_VOICES
 const TWO_PI := PI * 2.0
 const MAX_INST := 64
 const MIN_DECAY := 0.02
+## Cap frames filled per visual frame so UI/sequencer keep running (~11ms)
+const MAX_FRAMES_PER_TICK := 512
 
 var player: AudioStreamPlayer
 var playback: AudioStreamGeneratorPlayback
 var voices: Array = []
 var instruments: Array = []
 
-var master_eq_low := 1.0
-var master_eq_mid := 1.0
-var master_eq_high := 1.0
-var master_lim_ceiling := 0.92
+# Master EQ / limiter (always cheap)
+var master_eq_gain := 1.0
+var master_lim_ceiling := 0.95
 var master_lim_env := 0.0
+
+# Master FX — OFF by default (expensive in GDScript). Toggle from INST later.
+var master_dist_drive := 0.0
+var master_chorus_wet := 0.0
+var master_delay_wet := 0.0
+var master_delay_time := 0.28
+var master_delay_fb := 0.28
+var master_reverb_wet := 0.0
 
 var delay_l: PackedFloat32Array
 var delay_r: PackedFloat32Array
@@ -33,14 +40,8 @@ var chorus_phase := 0.0
 var reverb_buf: PackedFloat32Array
 var reverb_idx := 0
 
-var master_dist_drive := 0.0
-var master_chorus_wet := 0.0
-var master_delay_wet := 0.12
-var master_delay_time := 0.28
-var master_delay_fb := 0.3
-var master_reverb_wet := 0.1
-
 var _pad_rr := 0
+var _out_buf: PackedVector2Array = PackedVector2Array()
 
 func _ready() -> void:
 	_init_instruments()
@@ -52,11 +53,11 @@ func _ready() -> void:
 	add_child(player)
 	var gen := AudioStreamGenerator.new()
 	gen.mix_rate = SAMPLE_RATE
-	gen.buffer_length = 0.15
+	# Slightly larger buffer = more headroom when a frame is late
+	gen.buffer_length = 0.12
 	player.stream = gen
-	player.volume_db = -3.0
+	player.volume_db = -4.0
 	player.play()
-	# defer until stream is actually playing
 	call_deferred("_grab_playback")
 
 func _grab_playback() -> void:
@@ -66,34 +67,28 @@ func _grab_playback() -> void:
 func _init_instruments() -> void:
 	instruments.clear()
 	for i in range(MAX_INST):
-		var inst := Instrument.new(i)
-		if i == 16 or i == 17:
-			inst.set_fx_slot(0, Instrument.FxType.CHORUS, 0.2, 0.4, 0.5)
-		if i >= 20 and i <= 24:
-			inst.set_fx_slot(0, Instrument.FxType.DELAY, 0.25, 0.35, 0.4)
-		instruments.append(inst)
+		instruments.append(Instrument.new(i))
 
 func _init_fx_buffers() -> void:
-	delay_len = int(SAMPLE_RATE * 0.9)
+	# Smaller delay/reverb so enabling FX later is cheaper
+	delay_len = int(SAMPLE_RATE * 0.5)
 	delay_l = PackedFloat32Array()
 	delay_l.resize(delay_len)
 	delay_r = PackedFloat32Array()
 	delay_r.resize(delay_len)
 	reverb_buf = PackedFloat32Array()
-	reverb_buf.resize(int(SAMPLE_RATE * 0.4))
+	reverb_buf.resize(int(SAMPLE_RATE * 0.18))
 
 func _process(_delta: float) -> void:
 	if playback == null:
 		_grab_playback()
 		return
-	var frames = playback.get_frames_available()
+	var frames: int = playback.get_frames_available()
 	if frames <= 0:
 		return
-	# fill in moderate chunks to avoid long main-thread stalls
-	while frames > 0:
-		var n = mini(frames, 128)
-		_render(n)
-		frames -= n
+	# Never fill more than MAX_FRAMES_PER_TICK in one visual frame
+	var n: int = mini(frames, MAX_FRAMES_PER_TICK)
+	_render(n)
 
 func get_instrument(id: int) -> Instrument:
 	return instruments[id % MAX_INST]
@@ -125,24 +120,22 @@ func _make_voice() -> Dictionary:
 		"sample_inc": 1.0,
 		"sample_gain": 1.0,
 		"synth_gain": 1.0,
-		"comp_env": 0.0,
 	}
 
-## channel: 0..3 = tracker channel (monophonic choke). -1 = live pad pool.
+## channel: 0..3 tracker (mono choke). -1 = live pad pool.
 func note_on(note: int, octave: int, instrument: int, fx1: String = "----", fx2: String = "----", velocity: float = 1.0, channel: int = -1) -> void:
 	var inst: Instrument = get_instrument(instrument)
 	var fx = _parse_fx_pair(fx1, fx2)
 	var freq = _note_to_freq(note, octave)
 	if fx.has("P"):
-		var p = int(fx["P"])
-		var semis = p if p < 128 else p - 256
+		var p: int = int(fx["P"])
+		var semis: int = p if p < 128 else p - 256
 		freq *= pow(2.0, float(semis) / 12.0)
 
 	var voice = _allocate_voice(channel)
 	if voice == null:
 		return
 
-	# hard choke — previous note on this channel is gone
 	voice.active = true
 	voice.channel = channel
 	voice.inst_id = instrument % MAX_INST
@@ -161,13 +154,18 @@ func note_on(note: int, octave: int, instrument: int, fx1: String = "----", fx2:
 	voice.filter_bias = 0.5
 	voice.mod_depth = 1.0
 	voice.start_pitch = 1.0
-	voice.use_synth = inst.synth_enabled
-	voice.use_sample = inst.has_sample()
 	voice.synth_gain = inst.synth_gain
 	voice.sample_gain = inst.sample_gain
-	voice.comp_env = 0.0
 	voice.sample_pos = 0.0
 	voice.sample_inc = 1.0
+
+	# Prefer sample OR synth, not both — double render was killing performance
+	var has_samp: bool = inst.has_sample()
+	voice.use_sample = has_samp and inst.sample_enabled
+	voice.use_synth = inst.synth_enabled and not voice.use_sample
+	if not voice.use_sample and not voice.use_synth:
+		# fall back to synth so something always sounds
+		voice.use_synth = true
 
 	if fx.has("V"):
 		voice.vel = clampf(float(fx["V"]) / 128.0, 0.05, 1.5)
@@ -179,7 +177,7 @@ func note_on(note: int, octave: int, instrument: int, fx1: String = "----", fx2:
 		voice.start_pitch = clampf(float(fx["S"]) / 128.0, 0.3, 2.5)
 
 	if voice.use_sample and inst.sample_data.size() > 0:
-		var root_freq = 440.0 * pow(2.0, (inst.sample_root_note - 69) / 12.0)
+		var root_freq = 440.0 * pow(2.0, float(inst.sample_root_note - 69) / 12.0)
 		voice.sample_inc = (freq / maxf(root_freq, 1.0)) * (inst.sample_rate / SAMPLE_RATE)
 		voice.sample_pos = float(maxi(0, inst.sample_start))
 
@@ -191,18 +189,18 @@ func note_on(note: int, octave: int, instrument: int, fx1: String = "----", fx2:
 		Instrument.SynthAlgo.SNARE:
 			base_decay = 0.17
 		Instrument.SynthAlgo.HAT:
-			base_decay = 0.04
+			base_decay = 0.05
 		Instrument.SynthAlgo.CLAP:
 			base_decay = 0.20
 		Instrument.SynthAlgo.BASS:
 			base_decay = 0.55
 		Instrument.SynthAlgo.TEXTURE:
-			base_decay = 1.1
+			base_decay = 1.0
 		Instrument.SynthAlgo.FM_METAL:
 			base_decay = 0.45
 			voice.freq2 = freq * (2.0 + float(instrument % 5) * 0.5) * voice.mod_depth
 		Instrument.SynthAlgo.NOISE_SWEEP:
-			base_decay = 0.75
+			base_decay = 0.7
 		_:
 			base_decay = 0.4
 
@@ -226,12 +224,10 @@ func stop_all() -> void:
 		v.use_sample = false
 
 func _allocate_voice(channel: int) -> Dictionary:
-	# Tracker channels: fixed slot 0..3 — always choke previous
 	if channel >= 0 and channel < TRACKER_CHANNELS:
 		var v = voices[channel]
 		v.active = false
 		return v
-	# Live pads: round-robin through pad pool
 	var idx = TRACKER_CHANNELS + (_pad_rr % PAD_VOICES)
 	_pad_rr = (_pad_rr + 1) % PAD_VOICES
 	var pv = voices[idx]
@@ -261,111 +257,108 @@ func _note_to_freq(note: int, octave: int) -> float:
 func _render(num_frames: int) -> void:
 	if playback == null or num_frames <= 0:
 		return
-	var out := PackedVector2Array()
-	out.resize(num_frames)
-	var inv_sr = 1.0 / SAMPLE_RATE
-	var delay_samples = clampi(int(master_delay_time * SAMPLE_RATE), 1, maxi(1, delay_len - 1))
+	if _out_buf.size() != num_frames:
+		_out_buf.resize(num_frames)
+	var inv_sr := 1.0 / SAMPLE_RATE
+	var use_delay := master_delay_wet > 0.01 and delay_len > 1
+	var use_chorus := master_chorus_wet > 0.01 and delay_len > 1
+	var use_reverb := master_reverb_wet > 0.01 and reverb_buf.size() > 1
+	var use_dist := master_dist_drive > 0.01
+	var delay_samples := 1
+	if use_delay or use_chorus:
+		delay_samples = clampi(int(master_delay_time * SAMPLE_RATE), 1, delay_len - 1)
+	var rlen: int = reverb_buf.size()
+	var reverb_off: int = int(SAMPLE_RATE * 0.037) if use_reverb else 0
 
 	for i in range(num_frames):
-		var l := 0.0
-		var r := 0.0
-		for v in voices:
+		var mix := 0.0
+		for vi in range(TOTAL_VOICES):
+			var v = voices[vi]
 			if not v.active:
 				continue
 			v.age += inv_sr
-			var s = _render_voice(v, inv_sr)
-			if not is_finite(s):
-				s = 0.0
-				v.active = false
-				continue
-			var inst: Instrument = instruments[v.inst_id % MAX_INST]
-			var env_t = absf(s)
-			v.comp_env = lerpf(v.comp_env, env_t, 0.02)
-			if v.comp_env > inst.comp_threshold:
-				var over = (v.comp_env - inst.comp_threshold) / maxf(1.0 - inst.comp_threshold, 0.01)
-				var gr = 1.0 - (1.0 - 1.0 / maxf(inst.comp_ratio, 1.0)) * over
-				s *= clampf(gr, 0.2, 1.0)
-			s *= (inst.eq_low_gain * 0.35 + inst.eq_mid_gain * 0.4 + inst.eq_high_gain * 0.25)
-			l += s
-			r += s
-			# end voice when amp dies and sample done
-			var sample_alive = v.use_sample and v.sample_pos < float(inst.sample_end)
-			if v.amp_env < 0.001 and v.age > 0.02 and not sample_alive:
+			var s: float = _render_voice(v, inv_sr)
+			mix += s
+			if v.amp_env < 0.001 and v.age > 0.015 and not v.use_sample:
 				v.active = false
 
-		# Master FX (lightweight)
-		if master_dist_drive > 0.01:
-			var d = 1.0 + master_dist_drive * 4.0
-			l = tanh(l * d) / maxf(tanh(d), 0.001)
-			r = tanh(r * d) / maxf(tanh(d), 0.001)
+		# Master FX only when wet > 0
+		if use_dist:
+			var d = 1.0 + master_dist_drive * 3.0
+			mix = clampf(mix * d, -1.5, 1.5)
+			# soft clip without tanh (faster)
+			if mix > 1.0:
+				mix = 1.0 - 1.0 / (mix + 1.0) * 0.5
+			elif mix < -1.0:
+				mix = -1.0 + 1.0 / (-mix + 1.0) * 0.5
 
-		if master_chorus_wet > 0.01 and delay_len > 0:
+		if use_chorus:
 			chorus_phase = fmod(chorus_phase + 0.8 * inv_sr, 1.0)
-			var mod = sin(chorus_phase * TWO_PI) * 0.003
+			var mod = sin(chorus_phase * TWO_PI) * 0.0025
 			var c_samp = clampi(int((0.012 + mod) * SAMPLE_RATE), 1, delay_len - 1)
 			var c_idx = (delay_idx - c_samp + delay_len) % delay_len
-			l = lerpf(l, delay_l[c_idx], master_chorus_wet)
-			r = lerpf(r, delay_r[(c_idx + 17) % delay_len], master_chorus_wet)
+			mix = lerpf(mix, delay_l[c_idx], master_chorus_wet)
 
-		if delay_len > 0:
+		var dl := 0.0
+		var dr := 0.0
+		if use_delay or use_chorus:
 			var d_idx = (delay_idx - delay_samples + delay_len) % delay_len
-			var dl = delay_l[d_idx]
-			var dr = delay_r[d_idx]
-			if master_delay_wet > 0.01:
-				l += dl * master_delay_wet
-				r += dr * master_delay_wet
-			delay_l[delay_idx] = clampf(l + dl * master_delay_fb, -2.0, 2.0)
-			delay_r[delay_idx] = clampf(r + dr * master_delay_fb, -2.0, 2.0)
+			dl = delay_l[d_idx]
+			dr = delay_r[d_idx]
+			if use_delay:
+				mix += dl * master_delay_wet
+			delay_l[delay_idx] = clampf(mix + dl * master_delay_fb, -1.5, 1.5)
+			delay_r[delay_idx] = clampf(mix * 0.97 + dr * master_delay_fb, -1.5, 1.5)
 			delay_idx = (delay_idx + 1) % delay_len
 
-		if master_reverb_wet > 0.01 and reverb_buf.size() > 0:
-			var rlen = reverb_buf.size()
-			var r_read = (reverb_idx - int(SAMPLE_RATE * 0.037) + rlen) % rlen
+		if use_reverb:
+			var r_read = (reverb_idx - reverb_off + rlen) % rlen
 			var rv = reverb_buf[r_read]
-			reverb_buf[reverb_idx] = clampf((l + r) * 0.3 + rv * 0.7, -2.0, 2.0)
+			reverb_buf[reverb_idx] = clampf(mix * 0.25 + rv * 0.72, -1.5, 1.5)
 			reverb_idx = (reverb_idx + 1) % rlen
-			l += rv * master_reverb_wet
-			r += rv * master_reverb_wet * 0.92
+			mix += rv * master_reverb_wet
 
-		l *= (master_eq_low * 0.34 + master_eq_mid * 0.4 + master_eq_high * 0.26)
-		r *= (master_eq_low * 0.34 + master_eq_mid * 0.4 + master_eq_high * 0.26)
+		mix *= master_eq_gain
 
-		var peak = maxf(absf(l), absf(r))
-		master_lim_env = maxf(peak, master_lim_env * 0.999)
+		var peak = absf(mix)
+		master_lim_env = maxf(peak, master_lim_env * 0.9992)
 		if master_lim_env > master_lim_ceiling:
-			var g = master_lim_ceiling / master_lim_env
-			l *= g
-			r *= g
-		l = clampf(tanh(l * 0.9), -1.0, 1.0)
-		r = clampf(tanh(r * 0.9), -1.0, 1.0)
-		out[i] = Vector2(l, r)
+			mix *= master_lim_ceiling / master_lim_env
+		mix = clampf(mix, -1.0, 1.0)
+		_out_buf[i] = Vector2(mix, mix)
 
-	playback.push_buffer(out)
+	playback.push_buffer(_out_buf)
 
 func _render_voice(v: Dictionary, dt: float) -> float:
 	var s := 0.0
 	var inst: Instrument = instruments[v.inst_id % MAX_INST]
-	var decay = maxf(v.decay, MIN_DECAY)
 
-	# Sample layer
-	if v.use_sample and inst.sample_data.size() > 0:
-		var pos = int(v.sample_pos)
-		var s_end = mini(inst.sample_end, inst.sample_data.size())
-		if pos >= inst.sample_start and pos < s_end:
-			s += inst.sample_data[pos] * v.sample_gain * v.vel
-			v.sample_pos += v.sample_inc
-			if v.sample_pos >= float(s_end):
-				if inst.sample_loop:
-					v.sample_pos = float(inst.sample_start)
-				else:
-					v.use_sample = false
-		else:
+	if v.use_sample:
+		var data: PackedFloat32Array = inst.sample_data
+		var dsize: int = data.size()
+		if dsize <= 0:
 			v.use_sample = false
+		else:
+			var pos: int = int(v.sample_pos)
+			var s_end: int = mini(inst.sample_end if inst.sample_end > 0 else dsize, dsize)
+			if pos >= 0 and pos < s_end:
+				s = data[pos] * v.sample_gain * v.vel
+				v.sample_pos += v.sample_inc
+				# simple amp envelope for samples so they don't click forever
+				v.amp_env = 1.0
+				if v.sample_pos >= float(s_end):
+					if inst.sample_loop:
+						v.sample_pos = float(inst.sample_start)
+					else:
+						v.use_sample = false
+						v.amp_env = 0.0
+			else:
+				v.use_sample = false
+				v.amp_env = 0.0
+		return s
 
-	# Synth layer
 	if v.use_synth and v.algo != Instrument.SynthAlgo.NONE:
-		s += _render_synth(v, dt, decay) * v.synth_gain
-
+		s = _render_synth(v, dt, maxf(v.decay, MIN_DECAY)) * v.synth_gain
 	return s
 
 func _render_synth(v: Dictionary, dt: float, decay: float) -> float:
@@ -376,15 +369,14 @@ func _render_synth(v: Dictionary, dt: float, decay: float) -> float:
 			var f = 42.0 + (v.freq - 42.0) * v.pitch_env
 			v.phase = fmod(v.phase + f * dt, 1.0)
 			s = sin(v.phase * TWO_PI)
-			if v.age < 0.0035:
-				s += (randf() * 2.0 - 1.0) * 0.55 * (1.0 - v.age / 0.0035)
+			if v.age < 0.003:
+				s += (randf() * 2.0 - 1.0) * 0.4 * (1.0 - v.age / 0.003)
 			v.amp_env = exp(-v.age * (5.2 / decay))
 			s *= v.amp_env * v.vel * 0.9
 		Instrument.SynthAlgo.SNARE:
 			v.amp_env = exp(-v.age * (8.5 / decay))
-			var body = sin(v.phase * TWO_PI) * 0.32
 			v.phase = fmod(v.phase + 175.0 * dt, 1.0)
-			s = (body + _noise(v) * 0.68) * v.amp_env * v.vel
+			s = (sin(v.phase * TWO_PI) * 0.3 + _noise(v) * 0.7) * v.amp_env * v.vel
 		Instrument.SynthAlgo.HAT:
 			v.amp_env = exp(-v.age * (26.0 / decay))
 			var n = _noise(v)
@@ -447,12 +439,12 @@ func _noise(v: Dictionary) -> float:
 
 func bake_procedural_sample(inst_id: int, kind: String = "kick") -> void:
 	var inst: Instrument = get_instrument(inst_id)
-	var n = int(SAMPLE_RATE * 0.35)
+	var n: int = int(SAMPLE_RATE * 0.28)
 	var data := PackedFloat32Array()
 	data.resize(n)
 	for i in range(n):
-		var t = float(i) / SAMPLE_RATE
-		var s = 0.0
+		var t: float = float(i) / SAMPLE_RATE
+		var s := 0.0
 		match kind:
 			"kick":
 				var f = 150.0 * exp(-t * 20.0) + 40.0
@@ -465,3 +457,6 @@ func bake_procedural_sample(inst_id: int, kind: String = "kick") -> void:
 				s = sin(TWO_PI * 220.0 * t) * exp(-t * 6.0)
 		data[i] = s
 	inst.load_sample_mono(data, SAMPLE_RATE)
+	# sample layer only — avoid double render with synth
+	inst.sample_enabled = true
+	inst.synth_enabled = false
