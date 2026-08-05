@@ -63,11 +63,11 @@ func id_name(i: int = -1) -> String:
 	var n: int = current if i < 0 else i
 	return IDS[clampi(n, 0, IDS.size() - 1)]
 
-func select(i: int, emit_signal: bool = true) -> void:
+func select(i: int, do_emit: bool = true) -> void:
 	cursor = clampi(i, 0, IDS.size() - 1)
 	current = cursor
 	_repaint()
-	if emit_signal:
+	if do_emit:
 		scene_selected.emit(current)
 
 func move(dx: int, dy: int) -> void:
