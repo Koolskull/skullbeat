@@ -1,7 +1,8 @@
 extends Control
 
 ## ☦ SKULLBEAT — Super-instrument tracker
-## Synth + sample layer + 3-slot FX rack + EQ/comp per inst + master EQ/limiter
+## Synth + sample layer + 3-slot FX rack + EQ/comp + master
+## Sample import via Files / AudioShare · AUv3 shelved (docs/IOS_AUDIO.md)
 ## Tracker FX: V D F M P S
 
 const CHANNELS := 4
@@ -53,11 +54,17 @@ var rec_btn: Button
 var play_btn: Button
 var bpm_label: Label
 var synth: SynthEngine
+var sample_import: SampleImport
+var auv3: AUv3Host
 
 func _ready() -> void:
 	synth = SynthEngine.new()
 	add_child(synth)
-	# Bake sample layers into a few instruments (synth still runs alongside)
+	auv3 = AUv3Host.new()
+	add_child(auv3)
+	sample_import = SampleImport.new()
+	sample_import.setup(self, synth)
+	sample_import.import_finished.connect(_on_import_finished)
 	synth.bake_procedural_sample(1, "kick")
 	synth.bake_procedural_sample(6, "snare")
 	synth.bake_procedural_sample(10, "hat")
@@ -109,6 +116,30 @@ func _advance_step() -> void:
 			synth.note_on(d.note, d.oct, d.inst, d.fx1, d.fx2, 1.0)
 	_refresh_all_channels()
 
+func _import_target_inst() -> int:
+	# Prefer instrument under cursor if step has one, else pad-mapped selection
+	if channel_view_mode[selected_ch] == 0:
+		var d = phrases[selected_ch][selected_step]
+		if d.note >= 0 and d.inst > 0:
+			return d.inst
+	return clampi(selected_ch + 1, 1, 63)
+
+func _do_import() -> void:
+	var tid = _import_target_inst()
+	sample_import.set_target_instrument(tid)
+	status_label.text = "IMPORT → INST %02X  (WAV via Files / AudioShare)" % tid
+	sample_import.open_file_picker()
+
+func _do_audioshare() -> void:
+	status_label.text = "OPENING AUDIOSHARE · export WAV · then IMP"
+	SampleImport.open_audioshare()
+
+func _on_import_finished(success: bool, message: String, inst_id: int) -> void:
+	status_label.text = message
+	if success:
+		# Audition imported sample
+		synth.note_on(0, 4, inst_id, "V90", "----", 1.0)
+
 func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventKey and event.pressed and not event.echo): return
 	var key = event.keycode
@@ -123,6 +154,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 		KEY_0:
 			_toggle_rec(); get_viewport().set_input_as_handled()
+		KEY_I:
+			_do_import(); get_viewport().set_input_as_handled()
+		KEY_U:
+			_do_audioshare(); get_viewport().set_input_as_handled()
 		KEY_EQUAL, KEY_KP_ADD:
 			_change_bpm(1); get_viewport().set_input_as_handled()
 		KEY_MINUS, KEY_KP_SUBTRACT:
@@ -168,7 +203,7 @@ func _build_ui() -> void:
 	root.offset_left = 4; root.offset_top = 4; root.offset_right = -4; root.offset_bottom = -4
 	add_child(root)
 	header_bar = HBoxContainer.new()
-	header_bar.add_theme_constant_override("separation", 8)
+	header_bar.add_theme_constant_override("separation", 6)
 	root.add_child(header_bar)
 	var title := Label.new()
 	title.text = "☦ SKULLBEAT"
@@ -176,7 +211,7 @@ func _build_ui() -> void:
 	title.add_theme_font_size_override("font_size", 16)
 	header_bar.add_child(title)
 	var mode_lbl := Label.new()
-	mode_lbl.text = "SUPER-INST · SAMPLE+SYNTH+FX"
+	mode_lbl.text = "SAMPLE+SYNTH · AUv3 SHELVED"
 	mode_lbl.add_theme_color_override("font_color", COL_TEXT_DIM)
 	mode_lbl.add_theme_font_size_override("font_size", 11)
 	header_bar.add_child(mode_lbl)
@@ -194,6 +229,12 @@ func _build_ui() -> void:
 	var bpm_up := _make_console_btn("+")
 	bpm_up.pressed.connect(func(): _change_bpm(1))
 	header_bar.add_child(bpm_up)
+	var imp_btn := _make_console_btn("IMP")
+	imp_btn.pressed.connect(_do_import)
+	header_bar.add_child(imp_btn)
+	var as_btn := _make_console_btn("AS")
+	as_btn.pressed.connect(_do_audioshare)
+	header_bar.add_child(as_btn)
 	rec_btn = _make_console_btn("REC"); rec_btn.pressed.connect(_toggle_rec); header_bar.add_child(rec_btn)
 	play_btn = _make_console_btn("PLAY"); play_btn.pressed.connect(_toggle_play); header_bar.add_child(play_btn)
 	var stop_btn := _make_console_btn("STOP"); stop_btn.pressed.connect(_on_stop); header_bar.add_child(stop_btn)
@@ -237,7 +278,7 @@ func _build_ui() -> void:
 		channel_containers.append({"panel": ch_panel, "header": ch_header, "steps_box": steps_box, "col_hdr": col_hdr})
 		step_labels.append([])
 	status_label = Label.new()
-	status_label.text = "SUPER-INST: synth+sample · FX rack · EQ/COMP · MASTER EQ/LIM/DELAY/REVERB"
+	status_label.text = "IMP/I=import WAV · AS/U=AudioShare · pads live · SPACE play · AUv3 shelved"
 	status_label.add_theme_color_override("font_color", COL_TEXT_DIM)
 	status_label.add_theme_font_size_override("font_size", 10)
 	root.add_child(status_label)
@@ -368,7 +409,7 @@ func _change_bpm(d: int) -> void:
 
 func _make_console_btn(txt: String) -> Button:
 	var b := Button.new(); b.text = txt; b.focus_mode = Control.FOCUS_NONE
-	b.custom_minimum_size = Vector2(48, 26); _style_btn_active(b, false); return b
+	b.custom_minimum_size = Vector2(44, 26); _style_btn_active(b, false); return b
 
 func _style_btn_active(b: Button, active: bool) -> void:
 	var sb := StyleBoxFlat.new(); sb.set_corner_radius_all(0); sb.set_border_width_all(1)
