@@ -247,7 +247,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 
-	if KOALA_PADS.has(key) and not shift:
+	if KOALA_PADS.has(key) and not shift and not event.ctrl_pressed and not event.meta_pressed:
 		_on_pad(KOALA_PADS[key])
 		get_viewport().set_input_as_handled()
 		return
@@ -656,8 +656,8 @@ func _build_launch_view() -> void:
 
 	xy_a_panel = _make_xy_pad("XY A  X=filter  Y=drive", true)
 	xy_b_panel = _make_xy_pad("XY B  X=delay  Y=time", false)
-	xy_row.add_child(xy_a_panel.get_parent())
-	xy_row.add_child(xy_b_panel.get_parent())
+	xy_row.add_child(xy_a_panel.get_meta("wrap"))
+	xy_row.add_child(xy_b_panel.get_meta("wrap"))
 
 func _make_xy_pad(label: String, is_a: bool) -> ColorRect:
 	var wrap := VBoxContainer.new()
@@ -863,26 +863,12 @@ func _refresh_project_list() -> void:
 		row.add_child(b)
 		project_list.add_child(row)
 
-# Fix XY pad parenting — rebuild launch xy section cleanly on first show
-func _notification(what: int) -> void:
-	if what == NOTIFICATION_READY:
-		pass
-
 func _recalc_layout() -> void:
 	var h: float = size.y - 90.0
 	if h < 100.0: h = 400.0
 	visible_rows = clampi(int(h / 18.0), 8, STEPS)
-	if phrase_host and phrase_host.visible:
+	if not channel_containers.is_empty():
 		_rebuild_rows()
-	# fix xy pads: ensure wraps are in tree
-	_ensure_xy_parents()
-
-func _ensure_xy_parents() -> void:
-	if xy_a_panel and xy_a_panel.has_meta("wrap"):
-		var w: Control = xy_a_panel.get_meta("wrap")
-		if w.get_parent() == null and launch_host:
-			# already handled in build
-			pass
 
 func _rebuild_rows() -> void:
 	if channel_containers.is_empty():
